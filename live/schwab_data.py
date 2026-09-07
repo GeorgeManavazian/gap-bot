@@ -85,6 +85,33 @@ def fetch_universe_bars(client, tickers: list[str], as_of=None) -> dict:
     return out
 
 
+def latest_session_date(client, reference: str = "SPY"):
+    """The most recent trading day Schwab actually has a candle for, via
+    one cheap reference-ticker pull -- NOT the caller's wall-clock date.
+
+    This exists to fix a real bug (found + repro'd 2026-09-07): the VPS
+    runs in UTC, and "today" by wall-clock rolls over to the next
+    calendar date partway through the ET trading day (e.g. 8pm ET is
+    already past midnight UTC). Using wall-clock date as "today" both
+    (a) let the bot think a brand-new day had started while the market
+    was still in the SAME session, defeating the same-day-touch guard
+    and phantom-filling every pending watch at its own gap-day open, and
+    (b) on a market holiday, silently relabeled the last real session's
+    stale bar as the holiday's date instead of recognizing no new
+    session happened. Driving `today` off the data itself instead of the
+    wall clock fixes both: a holiday or an early re-trigger returns the
+    SAME session date as last time, which the caller's last_run_date
+    check already treats as a no-op.
+
+    Returns None if the reference pull fails outright (caller should
+    treat that as "can't tell, skip this tick" rather than guessing)."""
+    bars = fetch_universe_bars(client, [reference])
+    df = bars.get(reference)
+    if df is None or df.empty:
+        return None
+    return df.iloc[-1]["Date"].date()
+
+
 def bars_for_today(universe_bars: dict) -> dict:
     """{ticker: {"o","h","l","c","prior_close","adv"}} for the LAST row of
     each ticker's frame -- "today" as Schwab currently sees it. `adv` is
