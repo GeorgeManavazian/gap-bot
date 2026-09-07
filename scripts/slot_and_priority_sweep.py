@@ -56,7 +56,11 @@ def load_ticker(path):
     need = {"Date", "Open", "High", "Low", "Close", "Volume"}
     if not need.issubset(df.columns):
         return None
-    df = df[["Date", "Open", "High", "Low", "Close", "Volume"]].dropna()
+    df = df[["Date", "Open", "High", "Low", "Close", "Volume"]]
+    # OHLC/Date must be complete to trade the bar at all; a NaN Volume day
+    # should only cost that day's liquidity-floor check (handled downstream
+    # via get_adv() -> None), not silently drop the whole bar.
+    df = df.dropna(subset=["Date", "Open", "High", "Low", "Close"])
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").drop_duplicates("Date").reset_index(drop=True)
     if len(df) < HORIZON + 5:
