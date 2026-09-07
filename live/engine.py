@@ -34,23 +34,41 @@ def step_one_day(state: dict, today: str, bars: dict) -> dict:
     # 1) exits on open positions
     for tk in list(open_positions):
         pos = open_positions[tk]
-        row = bars.get(tk)
-        if row is None:
-            continue
+        # days_held advances unconditionally, BEFORE the bars lookup -- same
+        # pattern as pending's days_waited below. Otherwise a ticker that
+        # vanishes from bars for good (delisted/halted post-entry) never
+        # accumulates days_held again and never reaches HORIZON: it sits
+        # open forever, permanently occupying a slot (found + repro'd
+        # 2026-09-07).
         days_held = pos["days_held"] + 1
+        row = bars.get(tk)
         exit_price, reason = None, None
-        if row["l"] <= pos["stop_price"]:
-            exit_price, reason = pos["stop_price"], "stop"
-        elif row["h"] >= pos["tp_price"]:
-            exit_price, reason = pos["tp_price"], "tp_gap_filled"
-        elif days_held >= HORIZON:
-            exit_price, reason = row["c"], "time_exit"
+        if row is None:
+            # No price to check stop/tp against, but the clock still ran
+            # out -- close it at cost (same fallback already used for
+            # equity marking elsewhere in this file: `.get("c",
+            # pos["entry"])`) and tag it distinctly so the trade log shows
+            # this wasn't a normal, price-based timeout.
+            if days_held >= HORIZON:
+                exit_price, reason = pos["entry"], "time_exit_no_data"
+            else:
+                pos["days_held"] = days_held
+                continue
+        else:
+            if row["l"] <= pos["stop_price"]:
+                exit_price, reason = pos["stop_price"], "stop"
+            elif row["h"] >= pos["tp_price"]:
+                exit_price, reason = pos["tp_price"], "tp_gap_filled"
+            elif days_held >= HORIZON:
+                exit_price, reason = row["c"], "time_exit"
 
-        if exit_price is None:
-            pos["days_held"] = days_held
-            continue
+            if exit_price is None:
+                pos["days_held"] = days_held
+                continue
 
-        exit_price *= (1 - SLIP)  # slippage always against you: sell lower
+        if reason != "time_exit_no_data":
+            exit_price *= (1 - SLIP)  # slippage always against you: sell lower
+            # (no-data close isn't a real fill -- nothing to slip against)
         pnl_pct = (exit_price - pos["entry"]) / pos["entry"] * 100
         pnl_dollar = pos["shares"] * (exit_price - pos["entry"]) - 2 * COMMISSION_PER_TRADE
         cash += pos["shares"] * exit_price - COMMISSION_PER_TRADE
