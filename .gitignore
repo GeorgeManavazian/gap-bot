@@ -1,6 +1,10 @@
 # 57MB of yfinance OHLCV parquets, regenerable via scripts/download_bars.py
 data/daily_bars/
 
+# live paper-account state: cash/positions/trades -- real (if small) evolving
+# record, not source; synced to the VPS mirror separately, not this repo
+data/live/
+
 __pycache__/
 *.pyc
 .DS_Store
