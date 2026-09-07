@@ -1,0 +1,3 @@
+arm,n_trades,win_rate_%,total_return_%,max_drawdown_%,ret_per_maxdd,final_equity_$,n_stop,n_tp,n_time_exit
+corrected_anchor_flat63,508,81.1,72.34,-18.33,3.947,172335.69,49,391,68
+heldout_stops_horizon_B_30_35_50_63,563,79.0,71.26,-18.01,3.956,171255.55,51,413,99

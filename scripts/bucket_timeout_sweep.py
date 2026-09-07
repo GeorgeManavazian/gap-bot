@@ -27,7 +27,7 @@ FLAT_HORIZON = 63
 def run_sim_bucket_horizon(tickers_data, calendar, entry_style, scope_lo_hi,
                             horizon_by_bucket, max_slots=MAX_SLOTS,
                             priority="alpha", commission_per_trade=0.0,
-                            slippage_bps=0.0):
+                            slippage_bps=0.0, stop_fn=stop_for_abs_gap):
     """Same as slot_and_priority_sweep.run_sim, except HORIZON is looked up
     per-bucket (by the gap's own bucket name) instead of one flat constant,
     for both the pre-entry wick-wait clock and the post-entry time_exit
@@ -121,7 +121,7 @@ def run_sim_bucket_horizon(tickers_data, calendar, entry_style, scope_lo_hi,
                     abs_gap = -w["gap_pct"]
                     fill_candidates.append((tk, w["gap_open"], w["prior_close"],
                                             bucket_name_for(abs_gap),
-                                            stop_for_abs_gap(abs_gap),
+                                            stop_fn(abs_gap),
                                             w["gap_pct"], w["gap_date"]))
                     del pending[tk]
 
@@ -133,7 +133,7 @@ def run_sim_bucket_horizon(tickers_data, calendar, entry_style, scope_lo_hi,
                     abs_gap = -w["gap_pct"]
                     fill_candidates.append((tk, o, w["prior_close"],
                                             bucket_name_for(abs_gap),
-                                            stop_for_abs_gap(abs_gap),
+                                            stop_fn(abs_gap),
                                             w["gap_pct"], w["gap_date"]))
                     del pending[tk]
 
