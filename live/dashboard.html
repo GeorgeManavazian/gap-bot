@@ -1,0 +1,347 @@
+<title>Gap-Fill Bot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;500;700;800&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+.gb-root{
+  --bg: #0e1012;
+  --surface-top: #171d20;
+  --surface-bot: #111617;
+  --surface-2: #1c2528;
+  --border: rgba(255,255,255,0.07);
+  --text-primary: #e8eaea;
+  --text-secondary: #9fa3a4;
+  --text-muted: #666d6f;
+  --accent: #9be32d;
+  --accent-dim: #7fb824;
+  --accent-wash: rgba(155,227,45,0.10);
+  --negative: #e9504b;
+  --negative-wash: rgba(233,80,75,0.10);
+  color-scheme: dark;
+}
+.gb-root, .gb-root * { box-sizing: border-box; }
+.gb-root {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: "Roboto Condensed", system-ui, -apple-system, "Segoe UI", sans-serif;
+  min-height: 100%;
+  padding: 28px 24px 48px;
+}
+.gb-mono { font-family: "Roboto Mono", ui-monospace, "SF Mono", monospace; font-variant-numeric: tabular-nums; }
+.gb-page { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+
+.gb-header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px 24px;
+  padding-bottom: 18px; border-bottom: 1px solid var(--border);
+}
+.gb-brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.gb-wordmark { font-size: 30px; font-weight: 800; letter-spacing: 0.01em; text-transform: uppercase; }
+.gb-wordmark .dot { color: var(--accent); }
+.gb-sub { font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.08em; }
+.gb-status { display: flex; align-items: center; gap: 8px; }
+.gb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.gb-status-text { font-size: 13px; color: var(--accent); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.gb-meta { text-align: right; font-size: 12.5px; color: var(--text-muted); }
+.gb-meta .gb-mono { color: var(--text-secondary); }
+
+.gb-stats {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px;
+  background: var(--border); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+}
+@media (max-width: 900px) { .gb-stats { grid-template-columns: repeat(2, 1fr); } }
+.gb-stat { background: var(--surface-bot); padding: 16px 18px; }
+.gb-stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+.gb-stat-value { font-size: 22px; font-weight: 600; }
+.gb-stat-value.pos { color: var(--accent); }
+.gb-stat-value.neg { color: var(--negative); }
+.gb-stat-sub { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+.gb-row { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .gb-row { grid-template-columns: 1fr; } }
+
+.gb-card {
+  background: linear-gradient(160deg, var(--surface-top), var(--surface-bot));
+  border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px;
+}
+.gb-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
+.gb-card-title { font-size: 13px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-primary); }
+.gb-card-title .count { color: var(--text-muted); font-weight: 500; text-transform: none; letter-spacing: normal; margin-left: 6px; }
+.gb-card-note { font-size: 11.5px; color: var(--text-muted); }
+
+.gb-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; padding: 36px 12px; text-align: center;
+}
+.gb-empty-title { font-size: 14px; color: var(--text-secondary); font-weight: 600; }
+.gb-empty-sub { font-size: 12.5px; color: var(--text-muted); max-width: 32ch; }
+
+.gb-chart-wrap { position: relative; }
+.gb-chart-wrap svg { display: block; width: 100%; height: auto; }
+.gb-axis-label { font-family: "Roboto Mono", monospace; font-size: 10.5px; fill: var(--text-muted); }
+.gb-gridline { stroke: var(--border); stroke-width: 1; }
+
+table.gb-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.gb-table th {
+  text-align: right; padding: 6px 8px; font-size: 10.5px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+  font-family: "Roboto Mono", monospace; border-bottom: 1px solid var(--border);
+}
+table.gb-table td { text-align: right; padding: 8px 8px; border-bottom: 1px solid var(--border); }
+table.gb-table th:first-child, table.gb-table td:first-child { text-align: left; }
+table.gb-table tr:last-child td { border-bottom: none; }
+.gb-ticker { font-weight: 700; }
+.gb-num { font-family: "Roboto Mono", monospace; font-variant-numeric: tabular-nums; }
+.gb-pos { color: var(--accent); }
+.gb-neg { color: var(--negative); }
+.gb-bar-track { width: 60px; height: 5px; border-radius: 3px; background: var(--surface-2); display: inline-block; vertical-align: middle; overflow: hidden; }
+.gb-bar-fill { height: 100%; border-radius: 3px; background: var(--accent); }
+.gb-table-wrap { overflow-x: auto; }
+
+.gb-footer {
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px;
+  font-size: 11.5px; color: var(--text-muted); padding-top: 8px;
+}
+.gb-footer .gb-mono { color: var(--text-secondary); }
+</style>
+
+<div class="gb-root">
+  <div class="gb-page">
+    <div class="gb-header">
+      <div class="gb-brand">
+        <div class="gb-wordmark">Gap-Fill Bot<span class="dot">.</span></div>
+        <div class="gb-sub">Live Paper Trading</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:24px; flex-wrap:wrap;">
+        <div class="gb-status"><span class="gb-dot"></span><span class="gb-status-text" id="gbStatus">Live</span></div>
+        <div class="gb-meta">Last synced<br><span class="gb-mono" id="gbSynced">—</span></div>
+      </div>
+    </div>
+
+    <div class="gb-stats">
+      <div class="gb-stat">
+        <div class="gb-stat-label">Equity</div>
+        <div class="gb-stat-value gb-mono" id="stEquity">—</div>
+        <div class="gb-stat-sub gb-mono" id="stEquityDelta">—</div>
+      </div>
+      <div class="gb-stat">
+        <div class="gb-stat-label">Cash</div>
+        <div class="gb-stat-value gb-mono" id="stCash">—</div>
+        <div class="gb-stat-sub" id="stBuyingPower">buying power</div>
+      </div>
+      <div class="gb-stat">
+        <div class="gb-stat-label">Open Positions</div>
+        <div class="gb-stat-value gb-mono" id="stOpen">—</div>
+        <div class="gb-stat-sub" id="stSlots">of 20 slots</div>
+      </div>
+      <div class="gb-stat">
+        <div class="gb-stat-label">Watching</div>
+        <div class="gb-stat-value gb-mono" id="stPending">—</div>
+        <div class="gb-stat-sub">gaps waiting for a wick touch</div>
+      </div>
+      <div class="gb-stat">
+        <div class="gb-stat-label">Trades Logged</div>
+        <div class="gb-stat-value gb-mono" id="stTrades">—</div>
+        <div class="gb-stat-sub" id="stSince">since going live</div>
+      </div>
+    </div>
+
+    <div class="gb-row">
+      <div class="gb-card">
+        <div class="gb-card-head">
+          <div class="gb-card-title">Equity Curve</div>
+          <div class="gb-card-note">daily, synced from the VPS</div>
+        </div>
+        <div class="gb-chart-wrap" id="gbChartWrap">
+          <svg id="gbChartSvg" viewBox="0 0 700 220" preserveAspectRatio="none"></svg>
+        </div>
+      </div>
+
+      <div class="gb-card">
+        <div class="gb-card-head">
+          <div class="gb-card-title">Open Positions<span class="count" id="posCount"></span></div>
+        </div>
+        <div id="posBody"></div>
+      </div>
+    </div>
+
+    <div class="gb-row">
+      <div class="gb-card">
+        <div class="gb-card-head">
+          <div class="gb-card-title">Gap Watch<span class="count" id="watchCount"></span></div>
+          <div class="gb-card-note">waiting for price to re-touch the gap-day open (the "wick")</div>
+        </div>
+        <div class="gb-table-wrap" id="watchBody"></div>
+      </div>
+
+      <div class="gb-card">
+        <div class="gb-card-head">
+          <div class="gb-card-title">Recent Closed Trades<span class="count" id="tradesCount"></span></div>
+        </div>
+        <div id="tradesBody"></div>
+      </div>
+    </div>
+
+    <div class="gb-footer">
+      <div>Wick entry &middot; gap_desc priority &middot; 20 slots &middot; 1-2% bucket excluded &middot; 3%-ADV liquidity floor &middot; $0 commission + 10bps slippage</div>
+      <div class="gb-mono" id="gbFootRepo">github.com/GeorgeManavazian/gap-bot-state</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Real state as of the page's last publish -- overridden live by db.doc('state/current')
+  // once the sync pipeline (VPS -> GitHub -> refresh) has written to it.
+  var FALLBACK = {"cash":100000.0,"equity":100000.0,"open_positions":[],"pending":[{"ticker":"ADBE","gap_open":274.47,"gap_pct":-3.94750656167978,"days_waited":0},{"ticker":"ALB","gap_open":126.9,"gap_pct":-3.9800242130750534,"days_waited":0},{"ticker":"AMP","gap_open":553.25,"gap_pct":-2.093508883697891,"days_waited":0},{"ticker":"ARES","gap_open":138.37,"gap_pct":-2.2258338044092745,"days_waited":0},{"ticker":"ADSK","gap_open":232.08,"gap_pct":-2.2903334456045794,"days_waited":0},{"ticker":"COIN","gap_open":184.97,"gap_pct":-4.011416709911774,"days_waited":0},{"ticker":"EFX","gap_open":167.99,"gap_pct":-11.158707493786025,"days_waited":0},{"ticker":"FDS","gap_open":305.72,"gap_pct":-2.3133946830265697,"days_waited":0},{"ticker":"FICO","gap_open":934.39,"gap_pct":-16.492541982072165,"days_waited":0},{"ticker":"LULU","gap_open":98.15,"gap_pct":-19.397224275273047,"days_waited":0},{"ticker":"MCO","gap_open":492.02,"gap_pct":-2.4350584969264384,"days_waited":0},{"ticker":"NEM","gap_open":126.25,"gap_pct":-3.2047841754197703,"days_waited":0},{"ticker":"HOOD","gap_open":120.475,"gap_pct":-3.403624118024378,"days_waited":0},{"ticker":"SPGI","gap_open":438.41,"gap_pct":-2.700963202982813,"days_waited":0},{"ticker":"TSLA","gap_open":362.07,"gap_pct":-3.798174644294771,"days_waited":0}],"trades":[],"equity_curve":[{"date":"2026-09-07","equity":100000.0}],"last_run_date":"2026-09-07","live_since":"Sep 7, 2026"};
+
+  var fmtMoney = function (v) { return '$' + Math.round(v).toLocaleString('en-US'); };
+  var fmtPct = function (v) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; };
+  var fmtDate = function (iso) {
+    if (!iso) return '—';
+    var d = new Date(iso);
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
+
+  function render(state) {
+    document.getElementById('gbSynced').textContent = fmtDate(state.last_run_date ? state.last_run_date + 'T20:00:00Z' : null);
+    document.getElementById('stEquity').textContent = fmtMoney(state.equity);
+    var delta = state.equity - 100000;
+    var deltaPct = (delta / 100000) * 100;
+    var deltaEl = document.getElementById('stEquityDelta');
+    deltaEl.textContent = fmtMoney(Math.abs(delta)) + ' (' + fmtPct(deltaPct) + ') since $100k start';
+    deltaEl.className = 'gb-stat-sub gb-mono ' + (delta >= 0 ? 'gb-pos' : 'gb-neg');
+    document.getElementById('stEquity').className = 'gb-stat-value gb-mono ' + (delta > 0 ? 'pos' : delta < 0 ? 'neg' : '');
+
+    document.getElementById('stCash').textContent = fmtMoney(state.cash);
+    document.getElementById('stBuyingPower').textContent = fmtMoney(state.cash) + ' available';
+
+    var nOpen = (state.open_positions || []).length;
+    document.getElementById('stOpen').textContent = nOpen;
+    document.getElementById('stSlots').textContent = nOpen + ' of 20 slots filled';
+
+    var nPending = (state.pending || []).length;
+    document.getElementById('stPending').textContent = nPending;
+
+    var nTrades = (state.trades || []).length;
+    document.getElementById('stTrades').textContent = nTrades;
+    document.getElementById('stSince').textContent = state.live_since ? 'since ' + state.live_since : 'since going live';
+
+    renderChart(state.equity_curve || []);
+    renderPositions(state.open_positions || []);
+    renderWatch(state.pending || []);
+    renderTrades(state.trades || []);
+  }
+
+  function renderChart(points) {
+    var svg = document.getElementById('gbChartSvg');
+    svg.innerHTML = '';
+    var W = 700, H = 220, padL = 54, padR = 12, padT = 14, padB = 24;
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+    var svgns = 'http://www.w3.org/2000/svg';
+    function el(tag, attrs) {
+      var e = document.createElementNS(svgns, tag);
+      for (var k in attrs) e.setAttribute(k, attrs[k]);
+      return e;
+    }
+    if (points.length < 2) {
+      var wrap = document.getElementById('gbChartWrap');
+      var msg = document.createElement('div');
+      msg.className = 'gb-empty';
+      msg.style.minHeight = '180px';
+      msg.innerHTML = '<div class="gb-empty-title">Not enough history yet</div>' +
+        '<div class="gb-empty-sub">The curve fills in once a few days of live trading exist. Started at $100,000 on ' +
+        (points[0] ? points[0].date : 'go-live') + '.</div>';
+      svg.style.display = 'none';
+      wrap.appendChild(msg);
+      return;
+    }
+    var vals = points.map(function (p) { return p.equity; });
+    var lo = Math.min.apply(null, vals.concat([100000])) * 0.98;
+    var hi = Math.max.apply(null, vals.concat([100000])) * 1.02;
+    function x(i) { return padL + (i / (points.length - 1)) * plotW; }
+    function y(v) { return padT + (1 - (v - lo) / (hi - lo)) * plotH; }
+    [lo, (lo + hi) / 2, hi].forEach(function (v) {
+      var gy = y(v);
+      svg.appendChild(el('line', { x1: padL, x2: W - padR, y1: gy, y2: gy, class: 'gb-gridline' }));
+      var t = el('text', { x: padL - 8, y: gy + 4, class: 'gb-axis-label', 'text-anchor': 'end' });
+      t.textContent = '$' + Math.round(v / 1000) + 'k';
+      svg.appendChild(t);
+    });
+    var d = points.map(function (p, i) { return (i === 0 ? 'M' : 'L') + x(i).toFixed(1) + ',' + y(p.equity).toFixed(1); }).join(' ');
+    svg.appendChild(el('path', { d: d, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2 }));
+    var last = points[points.length - 1];
+    svg.appendChild(el('circle', { cx: x(points.length - 1), cy: y(last.equity), r: 3.5, fill: 'var(--accent)' }));
+  }
+
+  function renderPositions(positions) {
+    var body = document.getElementById('posBody');
+    document.getElementById('posCount').textContent = positions.length ? '(' + positions.length + ')' : '';
+    if (!positions.length) {
+      body.innerHTML = '<div class="gb-empty"><div class="gb-empty-title">No open positions</div>' +
+        '<div class="gb-empty-sub">Nothing has hit a wick-entry yet. Check the Gap Watch list for what\'s pending.</div></div>';
+      return;
+    }
+    var rows = positions.map(function (p) {
+      var pnl = (p.last - p.entry) / p.entry * 100;
+      var cls = pnl >= 0 ? 'gb-pos' : 'gb-neg';
+      return '<tr><td class="gb-ticker">' + p.ticker + '</td><td class="gb-num">' + p.bucket + '</td>' +
+        '<td class="gb-num">$' + p.entry.toFixed(2) + '</td><td class="gb-num">$' + p.last.toFixed(2) + '</td>' +
+        '<td class="gb-num ' + cls + '">' + fmtPct(pnl) + '</td><td class="gb-num">' + p.days_held + 'd</td></tr>';
+    }).join('');
+    body.innerHTML = '<div class="gb-table-wrap"><table class="gb-table"><thead><tr><th>Ticker</th><th>Bucket</th><th>Entry</th><th>Last</th><th>P&amp;L</th><th>Held</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function renderWatch(pending) {
+    var body = document.getElementById('watchBody');
+    document.getElementById('watchCount').textContent = pending.length ? '(' + pending.length + ')' : '';
+    if (!pending.length) {
+      body.innerHTML = '<div class="gb-empty"><div class="gb-empty-title">Nothing gapped down today</div></div>';
+      return;
+    }
+    var sorted = pending.slice().sort(function (a, b) { return Math.abs(b.gap_pct) - Math.abs(a.gap_pct); });
+    var rows = sorted.map(function (w) {
+      var distance = ((w.gap_open - (w.last || w.gap_open)) / w.gap_open) * -100;
+      var absGap = Math.abs(w.gap_pct);
+      var progress = Math.max(0, Math.min(100, 100 - (distance / absGap) * 100));
+      return '<tr><td class="gb-ticker">' + w.ticker + '</td>' +
+        '<td class="gb-num gb-neg">' + w.gap_pct.toFixed(2) + '%</td>' +
+        '<td class="gb-num">$' + w.gap_open.toFixed(2) + '</td>' +
+        '<td class="gb-num">' + w.days_waited + 'd</td>' +
+        '<td><span class="gb-bar-track"><span class="gb-bar-fill" style="width:' + progress.toFixed(0) + '%"></span></span></td></tr>';
+    }).join('');
+    body.innerHTML = '<table class="gb-table"><thead><tr><th>Ticker</th><th>Gap</th><th>Wick Level</th><th>Waiting</th><th>Progress</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  function renderTrades(trades) {
+    var body = document.getElementById('tradesBody');
+    document.getElementById('tradesCount').textContent = trades.length ? '(' + trades.length + ')' : '';
+    if (!trades.length) {
+      body.innerHTML = '<div class="gb-empty"><div class="gb-empty-title">No trades closed yet</div>' +
+        '<div class="gb-empty-sub">The bot went live today — the Gap Watch list above is its first batch of candidates.</div></div>';
+      return;
+    }
+    var rows = trades.slice(0, 8).map(function (t) {
+      var cls = t.pnl_pct >= 0 ? 'gb-pos' : 'gb-neg';
+      return '<tr><td class="gb-ticker">' + t.ticker + '</td><td class="gb-num">' + t.exit_reason + '</td>' +
+        '<td class="gb-num ' + cls + '">' + fmtPct(t.pnl_pct) + '</td><td class="gb-num">' + t.days_held + 'd</td></tr>';
+    }).join('');
+    body.innerHTML = '<div class="gb-table-wrap"><table class="gb-table"><thead><tr><th>Ticker</th><th>Exit</th><th>P&amp;L</th><th>Held</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  render(FALLBACK);
+
+  // Live path: once the sync pipeline has written real state into the
+  // artifact's database, this overrides the embedded fallback above and
+  // keeps updating live while the page stays open.
+  (async function () {
+    try {
+      var db = await claude.use('db');
+      if (!db) return;
+      document.getElementById('gbStatus').textContent = 'Live';
+      db.doc('state/current').onSnapshot(function (snap) {
+        if (snap.exists) render(snap.data());
+      }, function () { /* stay on fallback data on error */ });
+    } catch (e) { /* stay on fallback data */ }
+  })();
+})();
+</script>
