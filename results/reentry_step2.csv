@@ -1,0 +1,6 @@
+bucket,n_reentered_trades,then_fills_%,avg_profit_%_when_filled,median_days_reentry_to_fill
+1-2%,72815,96.7,1.393,0.0
+2-3%,18184,94.9,2.467,0.0
+3-5%,10153,91.4,3.885,1.0
+5-10%,4837,84.2,7.175,3.0
+10%+,1073,70.5,15.846,9.0

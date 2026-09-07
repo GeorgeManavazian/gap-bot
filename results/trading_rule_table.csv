@@ -1,0 +1,6 @@
+bucket,n_gaps,n_resolved,resolved_%,avg_profit_%_per_resolved_trade,median_days_held_resolved,n_unresolved,avg_move_%_at_quarter_mark_unresolved
+1-2%,74933,71226,95.1,1.392,1.0,3707,-15.151
+2-3%,18850,17407,92.3,2.468,1.0,1443,-14.458
+3-5%,10612,9341,88.0,3.885,2.0,1271,-14.437
+5-10%,5038,4087,81.1,7.173,5.0,951,-10.88
+10%+,1119,759,67.8,15.835,10.0,360,-5.196

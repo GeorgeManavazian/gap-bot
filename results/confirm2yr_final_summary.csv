@@ -1,0 +1,5 @@
+arm,n_trades,win_rate_%,total_return_%,max_drawdown_%,ret_per_maxdd,final_equity_$
+blend_all_no_friction,614,82.2,73.52,-17.65,4.166,173519.66
+exclude_1-2pct_no_friction,526,81.0,81.08,-17.51,4.63,181077.97
+blend_all_friction,618,82.2,61.67,-17.81,3.463,161672.83
+exclude_1-2pct_friction,501,80.0,65.42,-17.69,3.697,165424.49

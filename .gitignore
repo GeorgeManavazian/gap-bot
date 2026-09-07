@@ -1,0 +1,7 @@
+# 57MB of yfinance OHLCV parquets, regenerable via scripts/download_bars.py
+data/daily_bars/
+
+__pycache__/
+*.pyc
+.DS_Store
+.venv*/
