@@ -88,7 +88,11 @@ def sync_state(state_dir: str, mirror_clone_dir: str) -> bool:
         _run(["git", "config", "user.email", "gapbot@localhost"], mirror_clone_dir)
         _run(["git", "config", "user.name", "gap-bot"], mirror_clone_dir)
 
-    r = _run(["rsync", "-a", "--delete", "--exclude=logs/",
+    # --delete mirrors mirror_clone_dir to exactly match state_dir, which
+    # would also delete the .git directory just created above (it isn't
+    # part of state_dir) -- found 2026-09-07 running this for real the
+    # first time, with a credential in place. --exclude=.git protects it.
+    r = _run(["rsync", "-a", "--delete", "--exclude=.git", "--exclude=logs/",
               state_dir + "/", mirror_clone_dir + "/"], None)
     if r.returncode != 0:
         print(f"sync_state: rsync failed: {r.stderr}")
