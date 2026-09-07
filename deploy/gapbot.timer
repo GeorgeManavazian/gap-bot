@@ -1,0 +1,15 @@
+[Unit]
+Description=Fire the Gap Bot tick every 5 minutes
+
+[Timer]
+# Same wall-clock pattern as the wheel bot's timer (OnUnitActiveSec drifts
+# and leaves no next trigger after a stop). VPS clock is UTC; the tick
+# script does the ET gating and run_daily.py's own last_run_date guard
+# makes repeat triggers inside the EOD window harmless no-ops.
+OnCalendar=*:0/5
+OnBootSec=2min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

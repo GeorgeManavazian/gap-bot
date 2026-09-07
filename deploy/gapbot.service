@@ -1,0 +1,13 @@
+[Unit]
+Description=Gap Bot tick (EOD paper-trading run)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/gap-bot
+ExecStart=/bin/bash /home/ubuntu/gap-bot/scripts/gap_bot_tick.sh
+# One EOD run pulls daily bars for ~500 tickers sequentially -- generous
+# margin over the wheel bot's own measured pull time for a similar count.
+TimeoutStartSec=1800
