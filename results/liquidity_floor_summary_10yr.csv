@@ -1,0 +1,3 @@
+variant,n_trades,n_illiquid_rejected,win_rate_%,total_return_%,max_drawdown_%,ret_per_maxdd,mean_entry_adv_$
+floor_off,2790,0,82.9,1400.09,-25.25,55.445,993120239.0
+floor_on_3pct,2888,81,83.6,1600.89,-23.78,67.329,1011525010.0

@@ -53,10 +53,10 @@ def bucket_name_for(abs_gap):
 def load_ticker(path):
     df = pd.read_parquet(path)
     df.columns = [c if isinstance(c, str) else c[0] for c in df.columns]
-    need = {"Date", "Open", "High", "Low", "Close"}
+    need = {"Date", "Open", "High", "Low", "Close", "Volume"}
     if not need.issubset(df.columns):
         return None
-    df = df[["Date", "Open", "High", "Low", "Close"]].dropna()
+    df = df[["Date", "Open", "High", "Low", "Close", "Volume"]].dropna()
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").drop_duplicates("Date").reset_index(drop=True)
     if len(df) < HORIZON + 5:
@@ -64,14 +64,24 @@ def load_ticker(path):
     return df
 
 
+ADV_LOOKBACK = 20
+
+
 class TickerView:
-    def __init__(self, df):
+    def __init__(self, df, adv_lookback=ADV_LOOKBACK):
         self.dates = df["Date"].values
         self.idx = {d: i for i, d in enumerate(self.dates)}
         self.o = df["Open"].values
         self.h = df["High"].values
         self.l = df["Low"].values
         self.c = df["Close"].values
+        self.v = df["Volume"].values
+        # trailing average dollar volume, look-back only: the mean of the
+        # `adv_lookback` days STRICTLY BEFORE today, today's own volume
+        # excluded since it isn't fully known at the moment a fill decision
+        # is made.
+        dollar_vol = pd.Series(self.c * self.v)
+        self.adv = dollar_vol.rolling(adv_lookback).mean().shift(1).values
 
     def get(self, day):
         i = self.idx.get(np.datetime64(day))
@@ -85,6 +95,13 @@ class TickerView:
             return None
         return self.c[i - 1]
 
+    def get_adv(self, day):
+        i = self.idx.get(np.datetime64(day))
+        if i is None:
+            return None
+        v = self.adv[i]
+        return None if np.isnan(v) else v
+
 
 def bucket_matches(abs_gap, scope):
     if scope == "all":
@@ -95,20 +112,29 @@ def bucket_matches(abs_gap, scope):
 
 def run_sim(tickers_data, calendar, entry_style, scope_lo_hi,
            max_slots=MAX_SLOTS, priority="alpha",
-           commission_per_trade=0.0, slippage_bps=0.0):
+           commission_per_trade=0.0, slippage_bps=0.0,
+           max_pct_of_adv=None):
     """scope_lo_hi: (lo, hi) tuple for one bucket, or the string 'all'.
     priority: 'alpha' (original tie-break) or 'gap_desc' (biggest |gap%|
     first when candidates exceed free slots).
     commission_per_trade: flat $ charged on each fill (entry and exit are
     two separate fills). slippage_bps: fraction of price lost to spread/
     market impact on each fill, applied against you both ways (buy higher,
-    sell lower)."""
+    sell lower).
+    max_pct_of_adv: liquidity floor. None disables it (original behavior).
+    Otherwise a candidate is REJECTED (not resized -- skipped, freeing its
+    slot for the next candidate in priority order) if position_dollars
+    would exceed this fraction of the ticker's trailing look-back-only
+    average dollar volume (see TickerView.adv). A ticker with insufficient
+    history for the average (None) is let through uncapped -- happens only
+    in the first `ADV_LOOKBACK` days of the whole 10yr dataset."""
     slip = slippage_bps / 10_000.0
     cash = CAPITAL
     open_positions = {}   # ticker -> position dict
     pending = {}          # ticker -> watch dict (wick/close_confirm only)
     equity_curve = []
     trades = []           # full log rows
+    n_illiquid_rejected = 0
 
     for day_idx, day in enumerate(calendar):
         # 1) exits on open positions
@@ -229,7 +255,10 @@ def run_sim(tickers_data, calendar, entry_style, scope_lo_hi,
         else:
             fill_candidates.sort(key=lambda x: x[0])
         free = max_slots - len(open_positions)
-        for tk, entry_price, tp_price, bucket, stop_w, gap_pct, gap_date in fill_candidates[:max(free, 0)]:
+        filled = 0
+        for tk, entry_price, tp_price, bucket, stop_w, gap_pct, gap_date in fill_candidates:
+            if filled >= free:
+                break
             mtm = sum(
                 (tickers_data[p].get(day) or (0, 0, 0, pp["entry"]))[3] * pp["shares"]
                 for p, pp in open_positions.items()
@@ -238,6 +267,11 @@ def run_sim(tickers_data, calendar, entry_style, scope_lo_hi,
             size_dollars = equity_now / max_slots
             if size_dollars > cash:
                 continue
+            if max_pct_of_adv is not None:
+                adv = tickers_data[tk].get_adv(day)
+                if adv is not None and size_dollars > max_pct_of_adv * adv:
+                    n_illiquid_rejected += 1
+                    continue
             entry_price *= (1 + slip)  # slippage always against you: buy higher
             shares = size_dollars / entry_price
             cash -= size_dollars + commission_per_trade
@@ -248,6 +282,7 @@ def run_sim(tickers_data, calendar, entry_style, scope_lo_hi,
                 "gap_date": gap_date, "entry_date": day,
                 "position_dollars": size_dollars,
             }
+            filled += 1
 
         # 4) mark equity
         mtm = sum(
@@ -270,6 +305,7 @@ def run_sim(tickers_data, calendar, entry_style, scope_lo_hi,
         "final_equity": eq.iloc[-1],
         "trades_df": tdf,
         "equity_curve": eq,
+        "n_illiquid_rejected": n_illiquid_rejected,
     }
 
 
