@@ -41,3 +41,12 @@ else
     log "tick FAILED, exit $?"
     exit 1
 fi
+
+# Sync is best-effort and must never fail the tick -- the trading decision
+# already happened and is already persisted locally; a sync problem is a
+# dashboard-freshness issue, not a trading one.
+PYTHONPATH="$REPO" "$PY" -c "
+from live.sync import sync_state
+ok = sync_state('$REPO/data/live', '/home/ubuntu/gap-bot-state-mirror')
+print('sync ' + ('ok' if ok else 'skipped/failed'))
+" >> "$LOGDIR/tick.log" 2>&1 || log "sync step raised, continuing anyway"
