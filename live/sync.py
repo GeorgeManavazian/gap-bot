@@ -1,7 +1,10 @@
-"""Push data/live/ to a private GitHub repo (gap-bot-state) so a dashboard
+"""Push data/live/ to a PUBLIC GitHub repo (gap-bot-state) so a dashboard
 can read current state without touching the VPS directly. Same one-way
 doctrine as the wheel bot's live/sync.py: VPS -> GitHub -> reader, no
-merge case, VPS is sole writer.
+merge case, VPS is sole writer. The repo is public by the owner's choice
+(cloud routines couldn't read a private one), so everything synced is
+world-readable: only data/live/account/ goes up; logs/ is excluded below
+because tick.log carries internal paths that nobody outside needs.
 
 Credential lives OUTSIDE this repo, at ~/.gapbot/git.json on the VPS
 ({"repo": "owner/gap-bot-state", "token": "...", "user": "..."}) --
@@ -85,7 +88,8 @@ def sync_state(state_dir: str, mirror_clone_dir: str) -> bool:
         _run(["git", "config", "user.email", "gapbot@localhost"], mirror_clone_dir)
         _run(["git", "config", "user.name", "gap-bot"], mirror_clone_dir)
 
-    r = _run(["rsync", "-a", "--delete", state_dir + "/", mirror_clone_dir + "/"], None)
+    r = _run(["rsync", "-a", "--delete", "--exclude=logs/",
+              state_dir + "/", mirror_clone_dir + "/"], None)
     if r.returncode != 0:
         print(f"sync_state: rsync failed: {r.stderr}")
         return False
