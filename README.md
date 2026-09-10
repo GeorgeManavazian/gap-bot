@@ -1,71 +1,67 @@
-# Gap Bot — research workspace
+# gap-bot
 
-Stock-only (no options) gap-fill strategy research. Started 2026-09-05.
-Full narrative + findings live in the vault: **`vault/11 Gap Bot/_STATUS.md`**
-— read that first. This README is just the code map.
+Buy an S&P 500 stock after it gaps down 2% or more, once price trades back up to the gap-day open; sell when the gap fills at the prior close, at a per-bucket stop, or after 63 trading days. Ten years of daily-bar backtests and a paper-trading bot.
 
-## Layout
+![Gap fill rate by size bucket and direction, 503 S&P 500 tickers, 10 years of daily bars to 2026-09-04](results/fill_rate_by_size.png)
+
+Share of gaps that fill within a quarter, by size and direction. 503 tickers, 230,803 gap events, 2016-09-06 to 2026-09-04 (measured 2026-09-05). Counts fills, not trades, so it does not depend on any entry rule.
+
+## Thesis
+
+A gap is a forced repricing on news, and I think the crowd over-reacts on the downside more than the upside because selling is fear-driven while buying is deliberate. If that holds, a down-gap in a large-cap name that starts to recover intraday is a mean-reversion setup with a clean shape: a defined target (the prior close) and a natural time limit (the gap fills or it does not). Two things have to be true for it to pay. The fill rate has to be high enough to cover the gaps that keep falling, and the failures must not all land on the same day.
+
+## What I tested and what I learned
+
+- **The trade is positive after conservative fills and friction.** Held-out two years, 2024-09-04 to 2026-09-04: +11.45%, max drawdown -14.59%, 174 trades, 64.4% win rate, 20 slots, 10 bps slippage per fill, 1-2% gaps excluded (measured 2026-09-08). Takeaway: the edge survives a fill rule that gives it nothing for free, but it is thin, so exposure decides whether it is worth running.
+- **Down-gaps fill more reliably than up-gaps at every size.** Same-quarter fill rate and median days to fill, 10 years:
+
+  | gap size | down, fills within a quarter | up, fills within a quarter | down, median days to fill |
+  |---|---|---|---|
+  | 1-2% | 95.0% | 90.5% | 1 |
+  | 2-3% | 92.2% | 86.7% | 1 |
+  | 3-5% | 87.6% | 79.7% | 2 |
+  | 5-10% | 80.8% | 66.6% | 5 |
+  | 10%+ | 67.6% | 46.3% | 10 |
+
+  Takeaway: the downside asymmetry the thesis needs is there at every size, and the trade has a short median life.
+- **Size is the signal.** Traded alone for 10 years with 20 slots, the 1-2% bucket returned -80.2% with an -82.7% max drawdown; the 10%+ bucket returned +196.3%. The config excludes 1-2% gaps (2026-09-07). Takeaway: a high fill rate is not an edge unless the fill is worth more than the friction.
+- **Stops do not fix the risk, because the risk is correlated.** Across 110,544 trades over 10 years, every stop width lowered per-trade expectancy, monotonically: a 5% stop gave +0.08% per trade, a 30% stop +0.61%, no stop was best. In a 20-slot portfolio the max drawdown sat near -36% at every width, because panic days hit the whole book at once (250 names gapped down on 2020-03-27, 263 on 2020-04-01). The bot keeps per-bucket stops (7/11/16/26/37%) as a sanity limit only. Takeaway: the losses arrive together, so the answer is an exposure cap on the day, not a stop on the position.
+- **Options are the wrong instrument for this trade.** On real option chains (2024-09-04 to 2026-09-04, buy at the ask, sell at the bid), all 15 long-call configurations (14 to 60 DTE by 0.3, 0.5 and 0.7 delta) lost; the best returned -0.41% of notional per trade against +50.1% for the same signals held as stock (2026-09-08). Debit spreads: 87 of 92 cells negative. Takeaway: the median hold is 6 days and the median loser runs 58, so theta on a short-window mean-reversion trade eats the edge.
+
+## How it was tested
+
+Data: the 503 current S&P 500 constituents, 10 years of daily OHLCV from yfinance (2016-09-06 to 2026-09-04, pulled 2026-09-05), 230,803 gap events of 1% or more. End-of-day option chains from ThetaData, 2024-09-04 to 2026-09-04.
+
+Validation:
+- The last two years are held out. Stop widths were derived on the first eight years and scored once on the held-out two. The 10-year figures are direction checks, not magnitudes.
+- Fills: a resting limit order at the gap-day open, filled only where the day's low <= entry <= high, the most conservative reading a daily bar allows. Orders rest on the 20 largest gaps at the open, so the rule uses only what is known before the session starts.
+- Friction: 10 bps slippage per fill, $0 commission. No position larger than 3% of 20-day average dollar volume.
+
+Known gaps:
+- Survivorship. Today's S&P 500 list projected 10 years back inflates the 10-year returns, which is why only the 2-year magnitude is quoted.
+- Daily bars only. The order of intraday prices is unknown, so the fill rule assumes a resting order and nothing better.
+- The 2-year window has served more than one check (stops, fill rule, slot count), so it is held out from the stop derivation, not from every choice.
+- Stop widths and slot count come from 10-year per-trade statistics and have not been re-swept in the 2-year portfolio simulation. An early re-run suggests fewer slots do better (10 slots: +25.16%); not yet confirmed.
+- No slippage stress above 10 bps on this fill rule. No dividends, borrow, or tax. 66 signals had no option chain and were dropped from the options study.
+
+## Where it stands
+
+Paused, with the stock bot paper trading since 2026-09-07. Finished: the fill-rate, bucket, stop and slot studies, the held-out 2-year run, the options study, and a live engine that makes one decision per day after the close. Built but not deployed: long-call and call-spread variants of the engine, for a paper forward test beside the stock account. Open: whether 10 or 20 slots is right; what an exposure cap on panic days should look like, since the stop study pointed at that as the real risk control; and whether earnings gaps behave differently from news gaps. I paused because the next useful evidence is a few months of paper fills set against the backtest's fill assumption; that is running now, and the exposure cap is what I would build next.
+
+## What this is not
+
+Paper trading only. Not investment advice. It does not claim a live edge, and no paper P&L is reported here, because a few weeks of fills prove nothing either way.
+
+## How to run it
 
 ```
-data/
-  sp500_constituents.csv   current S&P 500 list (pulled from a public GitHub
-                           mirror of the Wikipedia constituents table)
-  daily_bars/              one parquet per ticker, 10yr daily OHLCV via
-                           yfinance (503 tickers, ~57MB, pulled 2026-09-05)
-scripts/                   every analysis script, in the order they were
-                           built (see below)
-results/                   every CSV/parquet output, plus:
-  trade_logs_18/           full per-trade logs, 3 entry styles x 6 bucket
-                           scopes, 2yr window -- one row per real trade
-  equity_curves/           daily equity series for every backtest variant run
+python -m venv .venv && .venv/bin/pip install pandas numpy pyarrow yfinance
+.venv/bin/python scripts/download_bars.py    # 10 years of daily bars, resumable
+.venv/bin/python scripts/analyze_gaps.py     # fill rates by bucket and direction
 ```
 
-## Re-running anything
+Every script under `scripts/` is standalone and reads the cached bars in `data/daily_bars/`; results land in `results/` as CSV. `live/run_daily.py` is the paper bot, on Schwab market data read-only, scheduled by the systemd unit in `deploy/`; `live/config.py` freezes the parameters above.
 
-All scripts are standalone, run from anywhere:
-```
-cd ~/Documents/Trading/code/etf-bot   # any repo with the shared .venv-live works
-.venv-live/bin/python ~/Documents/Trading/code/gap-bot/scripts/<script>.py
-```
-No new download needed for anything except `download_bars.py` itself — every
-other script reads the cached `data/daily_bars/` parquets. Re-run
-`download_bars.py` to refresh to a later date; it's resumable (skips tickers
-already cached).
+## Built with
 
-## Script order (what each one answers)
-
-1. `download_bars.py` — pulls the 10yr daily bar cache. Run once, or to refresh.
-2. `analyze_gaps.py` — the base gap-fill frequency study: how often, how fast,
-   by gap size and direction. → `fill_rate_table.csv`, `trading_rule_table.csv`
-3. `sizing_stats.py` — signal frequency per day, clustering on panic days,
-   max-adverse-excursion (informs stop placement). → `signals_per_day.csv`,
-   `mae_table.csv`
-4. `stop_loss_sim.py` — per-trade expectancy with a stop-loss added, at
-   several widths. → `stop_sim_data_derived.csv`, `stop_sweep_flat.csv`
-5. `portfolio_sim.py` / `portfolio_sim_2yr.py` — full $100k account,
-   equal-weight 20-slot sizing, WITH vs WITHOUT a stop, 10yr and 2yr.
-6. `portfolio_sim_risksized.py` — same, but sized by fixed-dollar risk /
-   stop distance instead of equal-weight (found WORSE — see _STATUS).
-7. `portfolio_sim_isolated_buckets.py` — each gap-size bucket run ALONE
-   (no other bucket competing for slots). The clean read on which bucket
-   sizes are actually good.
-8. `reentry_analysis.py` — the corrected entry timing: wait for a WICK back
-   up to the gap-day open before buying, instead of buying blind at the open.
-9. `reentry_confirmed_close.py` — a STRONGER version: wait for a full closed
-   day back above the gap open (found this kills the edge — see _STATUS).
-10. `full_18_backtest.py` — THE key result. 3 entry styles (naive / wick /
-    close_confirm) x 6 bucket scopes (5 isolated + all-combined), each its
-    own real $100k account, full trade logs. → `results/trade_logs_18/`,
-    `full_18_summary.csv`
-11. `slot_and_priority_sweep.py` — found that the 20-slot cap wasn't the
-    problem; the ticker-alphabetical tie-break was. Sweeps slot count x
-    tie-break rule (alpha vs biggest-gap-first). → `slot_priority_sweep_summary.csv`
-
-## The one-line status
-
-**Best result found so far:** wick entry, all buckets, 20 slots, tie-break by
-biggest gap first: **+73.5% / 2yr, max DD −17.7%, ret/maxDD 4.17** — beats
-every isolated bucket and every other configuration tested. Not yet
-confirmed on the full 10-year window, and zero slippage/commission modeled.
-See the vault status note for the full validation checklist before this
-becomes a live bot.
+Python 3, pandas, numpy, pyarrow. Daily bars from yfinance, option chains from ThetaData, live quotes from the Schwab market data API. Built with AI-assisted development (Claude Code); the research questions, hypotheses, validation choices, and conclusions are mine.
