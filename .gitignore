@@ -1,12 +1,24 @@
-# 57MB of yfinance OHLCV parquets, regenerable via scripts/download_bars.py
-data/daily_bars/
-
-# live paper-account state: cash/positions/trades -- real (if small) evolving
-# record, not source; synced to the VPS mirror separately, not this repo
-data/live/
-
+# Python
 __pycache__/
 *.pyc
-.DS_Store
 .venv*/
+.pytest_cache/
+.env
+.DS_Store
+scratchpad/
+
+# Data (regenerable or private)
+*.parquet
+*.db
+data/*
+!data/sp500_constituents.csv
+
+# 57 MB of yfinance OHLCV parquets, regenerable via scripts/download_bars.py
+data/daily_bars/
+
+# Live paper-account state: evolving record, synced to the state mirror, never here
+data/live/
+
+# Local-only work
 live/dashboard_design/
+charts/
