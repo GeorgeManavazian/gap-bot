@@ -1,12 +1,11 @@
-"""Correctness fix, not a parameter hunt: does a 3%-of-ADV liquidity floor
-change anything, and by how much? Currently the sim sizes every slot at
-1/20th of equity (~$5k-$10k+) into whatever gapped, with zero check on
-whether the ticker could actually absorb that size at the assumed 10bps
-slippage -- a thin, low-volume name slips far more than 10bps at that size
-in real life. The sim couldn't tell the difference until now.
+"""Tests whether a 3%-of-ADV liquidity floor changes the result, and by how
+much. Without it the sim sizes every slot at 1/20th of equity (~$5k-$10k+)
+into whatever gapped, with no check on whether the ticker could absorb that
+size at the assumed 10bps slippage; a thin, low-volume name slips far more
+than 10bps at that size in real life. One threshold, no parameter hunt.
 
-Runs on the full 10yr window (NOT the 2yr held-out window -- that one's
-spent, touched twice already for the stop-loss-leakage validation). The
+Runs on the full 10yr window, not the 2yr held-out window, which has
+already been used for the stop and horizon checks. The
 10yr window is already flagged elsewhere as "playground" due to
 survivorship bias, so it's fine for a DIRECTIONAL check (does the floor
 change results, which way, roughly how much) -- not a precise magnitude

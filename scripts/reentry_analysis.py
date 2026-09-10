@@ -1,5 +1,5 @@
-"""The CORRECTED gap trade, per owner clarification: we do NOT buy at the
-Open on the gap day (that's buying blind, right when it gaps down). We wait
+"""The gap trade as specified: we do NOT buy at the Open on the gap day
+(that's buying blind, right when it gaps down). We wait
 for price to climb back UP and RE-ENTER the gap zone -- cross back above the
 gap day's own Open -- and only then do we buy, on a LATER day than the gap
 itself. If price never comes back up to that level, no trade ever happens.

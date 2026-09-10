@@ -1,8 +1,8 @@
 """Regression check: replay the 2yr held-out window day-by-day through
 live/engine.step_one_day() (the same code run_daily.py calls) and confirm
-it reproduces the anchor backtest's numbers exactly. If this doesn't
-match, the live port has a bug and must NOT be trusted with real data --
-this is the one test that has to pass before the live bot is real.
+it matches the anchor backtest's numbers exactly. A mismatch means the
+live port does not match the backtest and should not run against real
+data until it does.
 
 Anchor to match (confirm2yr_heldout_stops_exclude_1-2pct_friction.csv):
   508 trades, +72.34% return, -18.33% maxDD, 81.1% win rate.
@@ -70,8 +70,8 @@ def main():
 
     ok = (len(tdf) == 508 and abs(total_return - 72.34) < 0.05
           and abs(dd.min() * 100 - (-18.33)) < 0.05)
-    print("\n" + ("MATCH -- live engine reproduces the anchor exactly." if ok
-                  else "MISMATCH -- live engine has a bug, do not trust it yet."))
+    print("\n" + ("MATCH -- live engine matches the anchor exactly." if ok
+                  else "MISMATCH -- live engine does not match the backtest."))
     return 0 if ok else 1
 
 

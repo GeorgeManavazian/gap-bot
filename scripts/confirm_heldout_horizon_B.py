@@ -1,21 +1,20 @@
 """Confirmation check: the per-bucket horizon-B timeout (2-3%->30d, 3-5%->35d,
-5-10%->50d, 10%+->63d) re-run against the CORRECTED anchor -- the 8yr-derived
+5-10%->50d, 10%+->63d) scored on the 2yr held-out window with the 8yr-derived
 stop table from confirm_2yr_heldout_stops.py (1-2%=7, 2-3%=11, 3-5%=16,
-5-10%=26, 10%+=37) instead of the leaked 8/11/15/24/35 table that
-bucket_timeout_sweep.py was originally scored against.
+5-10%=26, 10%+=37).
 
-Horizon-B's values were chosen BEFORE the corrected stops existed, so this is
-a one-shot confirmation of a pre-committed config, not a tune. It is also the
-second touch of the 2yr held-out window with these stops (the first was the
-flat-63 anchor run in confirm_2yr_heldout_stops.py) -- recorded here so
-nobody mistakes it for a clean first look.
+Horizon-B's values were fixed in advance, so this is a one-shot confirmation
+of a pre-committed config, not a tune. It is the second touch of the 2yr
+held-out window with these stops (the first was the flat-63 anchor run in
+confirm_2yr_heldout_stops.py), recorded here so nobody mistakes it for a
+clean first look.
 
 The stop table is rebuilt by calling the other script's own
 find_down_gaps_with_mae() on the same train cutoff (imported, not re-derived
-by hand), then asserted against the table hub reported, so a drift in either
+by hand), then asserted against the expected table, so a drift in either
 would fail loudly instead of silently scoring the wrong stops.
 
-Corrected anchor to beat (flat 63, corrected stops, 2yr, friction on):
+Anchor to beat (flat 63, 8yr-derived stops, 2yr, friction on):
   n=508, return=72.34%, maxDD=-18.33%, ret/maxdd=3.947
   results/confirm2yr_heldout_stops_exclude_1-2pct_friction.csv
 """
@@ -32,8 +31,8 @@ RESULTS = HERE.parent / "results"
 
 EXPECTED_STOPS = {"1-2%": 7.0, "2-3%": 11.0, "3-5%": 16.0, "5-10%": 26.0, "10%+": 37.0}
 HORIZON_B = {"2-3%": 30, "3-5%": 35, "5-10%": 50, "10%+": 63}
-CORRECTED_ANCHOR = {"n_trades": 508, "total_return_%": 72.34,
-                    "max_drawdown_%": -18.33, "ret_per_maxdd": 3.947}
+ANCHOR = {"n_trades": 508, "total_return_%": 72.34,
+          "max_drawdown_%": -18.33, "ret_per_maxdd": 3.947}
 
 
 def main():
@@ -71,17 +70,18 @@ def main():
                   commission_per_trade=0.0, slippage_bps=10.0, stop_fn=stop_fn)
     scope = (2.0, np.inf)
 
-    # Sanity: this variant sim with an empty horizon map must reproduce the
-    # other worker's flat-63 anchor exactly, or the comparison is invalid.
-    print(f"\nreproducing corrected anchor (flat 63) through run_sim_bucket_horizon ...")
+    # Sanity: this variant sim with an empty horizon map must match the
+    # flat-63 anchor from confirm_2yr_heldout_stops.py exactly, or the
+    # comparison is invalid.
+    print(f"\nreproducing the anchor (flat 63) through run_sim_bucket_horizon ...")
     ra = run_sim_bucket_horizon(tickers_data, test_calendar, "wick", scope, {}, **common)
-    anchor = summarize("corrected_anchor_flat63", ra)
+    anchor = summarize("anchor_flat63", ra)
     print(f"  n={anchor['n_trades']}  return={anchor['total_return_%']}%  "
           f"maxDD={anchor['max_drawdown_%']}%  ret/maxdd={anchor['ret_per_maxdd']}")
-    for k, v in CORRECTED_ANCHOR.items():
+    for k, v in ANCHOR.items():
         assert anchor[k] == v, f"anchor reproduction failed on {k}: {anchor[k]} != {v}"
 
-    print(f"\nrunning horizon-B {HORIZON_B} with corrected stops -- one shot ...")
+    print(f"\nrunning horizon-B {HORIZON_B} with 8yr-derived stops -- one shot ...")
     rb = run_sim_bucket_horizon(tickers_data, test_calendar, "wick", scope, HORIZON_B, **common)
     label = "heldout_stops_horizon_B_30_35_50_63"
     rb["trades_df"].to_csv(RESULTS / f"bucket_timeout_{label}.csv", index=False)
@@ -91,7 +91,7 @@ def main():
     summary = pd.DataFrame([anchor, b])
     summary.to_csv(RESULTS / "bucket_timeout_heldout_stops_summary.csv", index=False)
     print("\n" + "=" * 110)
-    print(f"HORIZON-B vs CORRECTED ANCHOR -- 8yr-derived stops, wick/gap_desc/20 slots/excl 1-2%/"
+    print(f"HORIZON-B vs ANCHOR -- 8yr-derived stops, wick/gap_desc/20 slots/excl 1-2%/"
           f"$0+10bps, {test_calendar[0].date()} -> {test_calendar[-1].date()}")
     print("=" * 110)
     print(summary.to_string(index=False))

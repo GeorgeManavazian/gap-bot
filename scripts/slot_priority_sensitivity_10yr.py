@@ -1,11 +1,11 @@
 """Sensitivity check on the two hand-picked portfolio knobs: max_slots
 {10, 20, 30, 40} x priority {alpha, gap_desc}, 8 cells, on the FULL 10yr
 window. Everything else is the anchor: wick entry, 1-2% bucket excluded,
-8yr-derived (unleaked) stops from confirm_2yr_heldout_stops.py, $0
+8yr-derived stops from confirm_2yr_heldout_stops.py, $0
 commission, 10bps slippage, flat 63-day horizon on both clocks.
 
-Why 10yr and not the 2yr held-out window: the 2yr window has been touched
-twice (stop-fix validation, horizon-B check) and a parameter grid on it
+Why 10yr and not the 2yr held-out window: the 2yr window has already been
+used twice (stop check, horizon-B check) and a parameter grid on it
 would turn the exam back into the playground. The 10yr window is inflated
 for magnitude (survivorship: today's S&P 500 projected backward) but that
 bias is shared by every cell on the same universe, so it's usable for the

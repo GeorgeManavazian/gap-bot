@@ -1,33 +1,19 @@
-"""Re-derives the per-bucket stop-loss table using ONLY the 8yr window that
-precedes the 2yr confirm window, then runs the confirm2yr_final "anchor" arm
-(wick entry, gap_desc priority, 20 slots, 1-2% bucket excluded, $0 commission
-+ 10bps slippage) exactly once against the untouched 2yr held-out window.
+"""Derives the per-bucket stop-loss table on the 8yr window that precedes
+the 2yr held-out window, then runs the anchor arm (wick entry, gap_desc
+priority, 20 slots, 1-2% bucket excluded, $0 commission + 10bps slippage)
+exactly once against the 2yr window.
 
-Why this script exists instead of editing stop_loss_sim.py / sizing_stats.py /
-slot_and_priority_sweep.py in place: confirm_2yr_final.py's stop table
-(8/11/15/24/35%) came from mae_table.csv, which sizing_stats.py built off
-EVERY parquet on disk with no date filter -- meaning the stop widths were
-tuned using data that fully contains the 2yr window they later got
-"confirmed" against. That's parameter leakage, not lookahead in the trade
-logic itself. This script fixes it by building the MAE table off only the
-8yr training era, then running the 2yr test era ONCE (playground vs exam --
-no second look, no re-running against the held-out window with a different
-stop table after seeing this result).
+The MAE table is built from the training era only, and the test era is
+scored a single time: no second look, no re-run with a different stop
+table after seeing the result.
 
 Does not modify slot_and_priority_sweep.py; monkeypatches its
 stop_for_abs_gap at call time so run_sim() picks up the 8yr-derived table.
 
-MUST run under etf-bot/.venv-live (per gap-bot/README.md), not any other
-venv: a first pass under etf-bot/.venv (pandas 2.3.3 / numpy 2.0.2) made
-np.datetime64(day) inside TickerView.get() build a different dtype unit
-than the datetime64[ms] parquet Date column, so every lookup missed and
-the sim silently produced zero trades -- confirmed the same 0-trade result
-even on the untouched original run_sim call, so it wasn't the stop-table
-change. Re-verified under .venv-live (pandas 3.0.3 / numpy 2.5.1) that the
-unpatched call reproduces the original anchor exactly (501 trades,
-65.42%), so this is a "wrong venv" mistake on my end, not a real bug in
-the shared module -- noted here only so the next person doesn't burn time
-rediscovering it.
+Requires pandas >= 3 / numpy >= 2.5 so that np.datetime64(day) inside
+TickerView.get() matches the datetime64[ms] Date column in the bar
+parquets; under older versions every lookup misses and the sim returns
+zero trades.
 """
 import numpy as np
 import pandas as pd
@@ -55,7 +41,7 @@ def bucket_of(abs_gap):
 def find_down_gaps_with_mae(df, ticker, train_cutoff):
     """Same MAE logic as sizing_stats.py, but an event only counts if BOTH
     its entry day and its full resolution window fall before train_cutoff --
-    otherwise its own outcome would still be leaking test-window data into
+    otherwise its outcome would depend on test-window data and feed into
     the stop we then test on that same window."""
     o, h, l, c = df["Open"].values, df["High"].values, df["Low"].values, df["Close"].values
     dates = df["Date"].values
@@ -116,7 +102,7 @@ def main():
     resolved = g[g["fill_day"].notna()]
 
     new_stops = {}
-    print("\n8yr-derived MAE / stop table (train era only, no test-window leakage):")
+    print("\n8yr-derived MAE / stop table (train era only):")
     print(f"{'bucket':8s} {'n_resolved':>10s} {'p90_mae_%':>10s} {'old_stop':>9s} {'new_stop':>9s}")
     old_stops = {"1-2%": 8.0, "2-3%": 11.0, "3-5%": 15.0, "5-10%": 24.0, "10%+": 35.0}
     for name, lo, hi in BUCKETS:
@@ -151,11 +137,11 @@ def main():
     ret_dd = (r["total_return_pct"] / abs(r["max_drawdown_pct"])
               if r["max_drawdown_pct"] else None)
     print("\n" + "=" * 100)
-    print("HELD-OUT RESULT (8yr-derived stops, tested once on the untouched 2yr) "
-          "vs the original in-sample-stop anchor")
+    print("HELD-OUT RESULT (8yr-derived stops, tested once on the 2yr window) "
+          "vs the in-sample-stop arm")
     print("=" * 100)
     print(f"{'':28s} {'n_trades':>9s} {'win_%':>7s} {'return_%':>9s} {'maxDD_%':>8s} {'ret/maxdd':>10s}")
-    print(f"{'ORIGINAL (leaked stops)':28s} {501:9d} {80.0:7.1f} {65.42:9.2f} {-17.69:8.2f} {3.697:10.3f}")
+    print(f"{'IN-SAMPLE STOPS':28s} {501:9d} {80.0:7.1f} {65.42:9.2f} {-17.69:8.2f} {3.697:10.3f}")
     print(f"{'HELD-OUT (8yr-derived)':28s} {r['n_trades']:9d} "
           f"{r['win_rate_pct']:7.1f} {r['total_return_pct']:9.2f} "
           f"{r['max_drawdown_pct']:8.2f} {ret_dd:10.3f}")
