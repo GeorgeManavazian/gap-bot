@@ -62,6 +62,8 @@ python -m venv .venv && .venv/bin/pip install pandas numpy pyarrow yfinance
 
 Every script under `scripts/` is standalone and reads the cached bars in `data/daily_bars/`; results land in `results/` as CSV. `live/run_daily.py` is the paper bot, on Schwab market data read-only, scheduled by the systemd unit in `deploy/`; `live/config.py` freezes the parameters above.
 
+The files behind the numbers above: the held-out two-year result is the trade log `results/anchor_resting_limit_174_trades.csv`; the slot-count question is `scripts/slot_sweep_resting_limit.py` with its output in `results/slot_sweep_resting_limit.csv` (two years) and `results/slot_sweep_resting_limit_10yr.csv` (ten years, direction only); the options study is `scripts/backtest_long_call_real.py`, `scripts/debit_spread_real_backtest.py` and `scripts/debit_spread_real_scorecard.py`, with per-configuration scorecards in `results/long_call_real_scorecard.csv` and `results/debit_spread_real_scorecard.csv` and every trade in the matching `*_trades.csv`. The options scripts read end-of-day chains from a sibling `etf-bot/data/options/` store (set `ETF_BOT_DIR` to point elsewhere).
+
 ## Built with
 
 Python 3, pandas, numpy, pyarrow. Daily bars from yfinance, option chains from ThetaData, live quotes from the Schwab market data API. Built with AI-assisted development (Claude Code); the research questions, hypotheses, validation choices, and conclusions are mine.
