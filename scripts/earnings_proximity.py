@@ -16,15 +16,19 @@ Logs analysed:
   10yr same config (bigger N, survivorship-inflated -- direction only):
     results/slot_priority_sensitivity_10yr_slots20_gap_desc.csv
 
-Calendar: etf-bot/data/earnings/calendar.parquet (ticker, earnings_date).
+Calendar: data/earnings/calendar.parquet (ticker, earnings_date), or the
+path given in the EARNINGS_CALENDAR environment variable.
 """
+import os
+
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
 HERE = Path(__file__).parent
 RESULTS = HERE.parent / "results"
-CALENDAR = Path("/home/user/Documents/Trading/code/etf-bot/data/earnings/calendar.parquet")
+CALENDAR = Path(os.environ.get("EARNINGS_CALENDAR",
+                               HERE.parent / "data" / "earnings" / "calendar.parquet"))
 FAR_LIMIT = 60
 
 LOGS = {
