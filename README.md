@@ -46,7 +46,7 @@ Known gaps:
 
 ## Where it stands
 
-Paused, with the stock bot paper trading since 2026-09-07. Finished: the fill-rate, bucket, stop and slot studies, the held-out 2-year run, the options study, and a live engine that makes one decision per day after the close. Built but not deployed: long-call and call-spread variants of the engine, for a paper forward test beside the stock account. Open: whether 10 or 20 slots is right; what an exposure cap on panic days should look like, since the stop study pointed at that as the real risk control; and whether earnings gaps behave differently from news gaps. I paused because the next useful evidence is a few months of paper fills set against the backtest's fill assumption; that is running now, and the exposure cap is what I would build next.
+Paused. The stock bot ran on paper from 2026-09-07 to 2026-09-12 and is stopped while the intraday fill logic is finished. Finished: the fill-rate, bucket, stop and slot studies, the held-out 2-year run, the options study, and a live engine that makes one decision per day after the close. Built but not deployed: long-call and call-spread variants of the engine, for a paper forward test beside the stock account. Open: whether 10 or 20 slots is right; what an exposure cap on panic days should look like, since the stop study pointed at that as the real risk control; and whether earnings gaps behave differently from news gaps. The next useful evidence is a few months of paper fills set against the backtest's fill assumption, which needs the intraday touch logic finished first; that and the exposure cap are what I would build next.
 
 ## What this is not
 
