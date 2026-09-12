@@ -1,11 +1,11 @@
 """Regression check: replay the 2yr held-out window day-by-day through
 live/engine.step_one_day() (the same code run_daily.py calls) and confirm
-it matches the anchor backtest's numbers exactly. A mismatch means the
+it reproduces the committed 2-year run exactly. A mismatch means the
 live port does not match the backtest and should not run against real
 data until it does.
 
-Anchor to match (confirm2yr_heldout_stops_exclude_1-2pct_friction.csv):
-  508 trades, +72.34% return, -18.33% maxDD, 81.1% win rate.
+Reference run: results/confirm2yr_heldout_stops_exclude_1-2pct_friction.csv
+(the expected trade count, return and drawdown are the constants below).
 """
 import sys
 from pathlib import Path
@@ -66,7 +66,7 @@ def main():
 
     print(f"\nlive-engine replay: n={len(tdf)}  win%={win_rate:.1f}  "
           f"return={total_return:.2f}%  maxDD={dd.min()*100:.2f}%")
-    print("anchor to match:    n=508  win%=81.1  return=72.34%  maxDD=-18.33%")
+    print("reference run:      n=508  win%=81.1  return=72.34%  maxDD=-18.33%")
 
     ok = (len(tdf) == 508 and abs(total_return - 72.34) < 0.05
           and abs(dd.min() * 100 - (-18.33)) < 0.05)

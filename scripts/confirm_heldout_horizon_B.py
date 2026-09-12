@@ -14,8 +14,7 @@ find_down_gaps_with_mae() on the same train cutoff (imported, not re-derived
 by hand), then asserted against the expected table, so a drift in either
 would fail loudly instead of silently scoring the wrong stops.
 
-Anchor to beat (flat 63, 8yr-derived stops, 2yr, friction on):
-  n=508, return=72.34%, maxDD=-18.33%, ret/maxdd=3.947
+Reference run (flat 63-day timeout, 8yr-derived stops, 2yr, friction on):
   results/confirm2yr_heldout_stops_exclude_1-2pct_friction.csv
 """
 import numpy as np

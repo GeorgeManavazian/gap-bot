@@ -16,8 +16,7 @@ Note the stop table is derived on the first 8yr, so on this 10yr window the
 stops are in-sample for 8 of the 10 years. That's the same for every cell.
 
 Sim: run_sim_bucket_horizon with an empty horizon map, which was asserted
-equal to run_sim on the 2yr anchor (508 / 72.34% / -18.33%) in
-confirm_heldout_horizon_B.py; used here only because it takes stop_fn as a
+equal to run_sim on the 2yr reference run in confirm_heldout_horizon_B.py; used here only because it takes stop_fn as a
 parameter instead of needing a monkeypatch.
 """
 import numpy as np
