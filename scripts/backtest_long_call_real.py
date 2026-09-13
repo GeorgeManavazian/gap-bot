@@ -2,7 +2,7 @@
 """Long-call replacement for the gap bot's stock trades, priced off REAL daily chains.
 
 For every trade in the 2yr anchor log, replace the shares with one long call
-chosen on the entry day from the real EOD chain snapshot (etf-bot's ThetaData
+chosen on the entry day from the real EOD chain snapshot (a local ThetaData
 store), mark it every day at mid off the real snapshots, and sell it at the bid
 on the stock trade's real exit day. If the option expires first, it settles at
 intrinsic on expiry and the trade ends there (no roll). Same signal, same

@@ -1,6 +1,6 @@
 """Schwab live-data client for gap-bot -- same config file, same token, same
 account as the wheel bot (one Schwab login serves both; this repo just reads
-it). Copied rather than cross-imported from code/etf-bot/scripts/schwab/
+it). Copied rather than cross-imported from a sibling project that is not public
 schwab_client.py so gap-bot stays a self-contained repo. Data-only, no order
 placement, matching the wheel bot's own doctrine."""
 from __future__ import annotations

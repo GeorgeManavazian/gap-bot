@@ -3,8 +3,8 @@
 Long call ATM at entry_price, short call at width_frac*(target-entry_price)
 above entry (target = entry_price/(1+gap_pct/100), the gap-fill/prior-close
 level -- same formula as scripts/options_structure_overlay.py's first-order
-pass). Uses REAL daily chain quotes from ../etf-bot/data/options/chains and
-../etf-bot/data/options/open_interest -- not a static Black-Scholes guess.
+pass). Uses real daily chain quotes from a local ThetaData store (chains and open
+interest; not public, see ETF_BOT_DIR) -- not a static Black-Scholes guess.
 
 Per (ticker, entry_date, target_dte): pick the real listed expiry nearest
 target_dte from that day's chain (band search, discrete Friday/monthly
@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 GAP = Path(__file__).resolve().parent.parent
-# Option chains live in a sibling etf-bot checkout by default; override with ETF_BOT_DIR.
+# Option chains live in a local store that is not public; point ETF_BOT_DIR at it.
 ETF = Path(os.environ.get("ETF_BOT_DIR", GAP.parent / "etf-bot"))
 CHAINS = ETF / "data/options/chains"
 OI = ETF / "data/options/open_interest"
