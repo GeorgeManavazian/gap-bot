@@ -1,5 +1,5 @@
-"""Gap-bot's intraday entry point -- fired every 5 minutes during the
-regular session by scripts/gap_bot_tick.sh (09:35-16:00 ET), one batched
+"""Gap-bot's intraday entry point -- fired every minute during the
+regular session by scripts/gap_bot_tick.sh (09:31-16:00 ET), one batched
 quote pull on the watched set, one check per variant, persist. See
 live/intraday.py for what this does and does not change; the short
 version: it only makes the ledger notice an already-pending watch's
@@ -46,7 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from live import state as state_mod
-from live.config import VARIANTS
+from live.config import PROFILE, PROFILE_BANNER, VARIANTS
 from live.fillers import make_filler
 from live.intraday import (
     watched_tickers, fetch_quotes, session_date_from_quotes, adv_for, check_watches, now_et,
@@ -115,7 +115,7 @@ def run_variant(variant: str, today: str, snap: dict, client, chain_provider, st
         state_mod.append_trade(t, variant)
     state_mod.save_state(state, variant)
     write_heartbeat(variant, {
-        "polled_at": stamp, "session": today, "equity": round(result["equity"], 2),
+        "polled_at": stamp, "session": today, "profile": PROFILE, "equity": round(result["equity"], 2),
         "exits": [t["ticker"] for t in result["trades"]], "entries": result["filled"],
         "watched": watch_table(state, snap),
     })
@@ -129,6 +129,9 @@ def main() -> int:
                     help="comma-separated subset of stock,call,spread (default: all)")
     args = ap.parse_args()
     variants = args.variants.split(",") if args.variants else list(VARIANTS)
+    # once per run, first line: the profile is process-wide and read from the
+    # environment, so the log must show which one this poll actually ran
+    print(PROFILE_BANNER)
 
     states = {v: state_mod.load_state(v) for v in variants}
     watched = sorted(set().union(*(watched_tickers(s) for s in states.values())))

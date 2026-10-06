@@ -33,7 +33,37 @@ Every number traces to a dated finding in the vault:
   - MAX_PCT_OF_ADV=0.03: barely bites on S&P 500 liquidity, net positive
     where it does -- scripts/liquidity_floor_check.py
 """
+import os
+
 import numpy as np
+
+# PROFILE (2026-10-06): "anchor" is the config above, unchanged and the default.
+# "ramp" is the paper-trading candidate from the 2026-10-06 research (results/
+# test_ramp_floor_summary.csv, ramp G12 floor 5%): slots start at RAMP_BASE and
+# grow by one per waiting >= RAMP_G% gap watch up to RAMP_MAX (live/engine.py
+# slot_limit), every position is equity/RAMP_SIZE_DIV, no ORDER is placed on a
+# gap smaller than RAMP_FLOOR% (ORDER_FLOOR, applied in engine.resting_orders),
+# one flat RAMP_STOP% disaster stop, same 63d exit / 10bps / 3% ADV floor.
+# EXCLUDE_BELOW stays 2.0 under BOTH profiles ON PURPOSE: 2-5% gaps are still
+# REGISTERED as watches (they just never get an order). A watch blocks its
+# ticker from registering another gap while it is pending, and that block
+# matters: raising the floor at REGISTRATION instead (the obvious way to "skip
+# small gaps") cut 10yr Sharpe 1.17 -> 0.75 and quintupled -50% stop-outs
+# (results/test_ramp_floor_native_summary.csv). Do not move this floor to
+# EXCLUDE_BELOW without re-running scripts/test_ramp_floor_native.py.
+# 10yr backtest: Sharpe 1.16, +331%, maxDD -17.0%. Survivor-biased, reused
+# window; paper fills are the only clean evidence. Select with GAPBOT_PROFILE=ramp.
+# PROCESS-WIDE: every variant in one tick (and daily + intraday) shares the one
+# profile. This is "ramp REPLACES anchor", never two profiles side by side; do
+# not expect per-variant profiles. If the systemd unit does not set
+# GAPBOT_PROFILE the process silently runs anchor, so every entry point prints
+# PROFILE_BANNER and deploy/gapbot.service sets the variable explicitly.
+PROFILE = os.environ.get("GAPBOT_PROFILE", "anchor")
+if PROFILE not in ("anchor", "ramp"):
+    raise ValueError(f"GAPBOT_PROFILE must be 'anchor' or 'ramp', got {PROFILE!r}")
+PROFILE_BANNER = f"[gapbot profile={PROFILE}]"
+RAMP_BASE, RAMP_MAX, RAMP_G, RAMP_SIZE_DIV = 6, 9, 12.0, 9
+RAMP_FLOOR, RAMP_STOP = 5.0, 50.0
 
 CAPITAL = 100_000.0
 MAX_SLOTS = 20
@@ -55,10 +85,18 @@ BUCKETS = [("1-2%", 1.0, 2.0, 7.0), ("2-3%", 2.0, 3.0, 11.0),
 
 
 def stop_for_abs_gap(abs_gap):
+    if PROFILE == "ramp":
+        return RAMP_STOP
     for _, lo, hi, stop in BUCKETS:
         if lo <= abs_gap < hi:
             return stop
     return None
+
+
+if PROFILE == "ramp":
+    MAX_SLOTS = RAMP_MAX          # ceiling only; the live count is engine.slot_limit()
+ORDER_FLOOR = RAMP_FLOOR if PROFILE == "ramp" else None   # no resting order below this |gap|%
+SIZE_DIV = RAMP_SIZE_DIV if PROFILE == "ramp" else None   # None = equity / MAX_SLOTS
 
 
 def bucket_name_for(abs_gap):

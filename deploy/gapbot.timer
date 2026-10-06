@@ -1,14 +1,17 @@
 [Unit]
-Description=Fire the Gap Bot tick every 5 minutes
+Description=Fire the Gap Bot tick every minute
 
 [Timer]
 # Same wall-clock pattern as the wheel bot's timer (OnUnitActiveSec drifts
 # and leaves no next trigger after a stop). VPS clock is UTC; the tick
-# script does the ET gating and run_daily.py's own last_run_date guard
-# makes repeat triggers inside the EOD window harmless no-ops.
-OnCalendar=*:0/5
+# script does the ET gating, runs the intraday poll every minute of the
+# session (09:31-16:00 ET, 2026-10-06), lets the EOD window fire only on
+# minutes that are a multiple of 5, and run_daily.py's own last_run_date
+# guard makes repeat triggers inside the EOD window harmless no-ops.
+# AccuracySec=1s so a poll lands on its minute, not up to 30s late.
+OnCalendar=*-*-* *:*:00
 OnBootSec=2min
-AccuracySec=30s
+AccuracySec=1s
 Persistent=true
 
 [Install]

@@ -14,7 +14,15 @@ of the intraday paper-fill path (stock variant only; call/spread stay paused).
   5. one tick at a time (flock in the tick script) and a per-pid tmp file in
      save_state;
   6. an ADV lookup failure intraday leaves the watch for the EOD run instead
-     of filling unfloored.
+     of filling unfloored;
+  7. 1-minute cadence (2026-10-06): the tick script polls 09:31-16:00 ET
+     every minute, fires the EOD window only on minutes divisible by 5,
+     logs nothing for a no-event poll after the session's first, caps an
+     intraday poll at 50s; the timer fires every minute;
+  8. GAPBOT_PROFILE: the poller takes its slot limit from engine.slot_limit,
+     its stop width from config.stop_for_abs_gap, and every entry point
+     prints the profile banner first. PROFILE is read at import time, so
+     the ramp checks run in a subprocess with the env set.
 
 Run: .venv/bin/python -m pytest scripts/test_intraday_blockers.py
 Reuses verify_intraday.py's fake Schwab client and poller driver.
@@ -378,6 +386,135 @@ def test_tick_intraday_timeout_logs_failed(tmp_path):
     slow = _stub(tmp_path, "slow_py", "sleep 3\n")
     rc, log = _tick(tmp_path / "repo", 2, 1000, py=slow, extra={"GAPBOT_TIMEOUT": "1"})
     assert rc == 1 and "tick FAILED (intraday), exit 124" in log
+
+
+# ------------------------------------------------- 7. 1-minute cadence
+
+def _mode(log):
+    return "intraday" if "tick ok (intraday)" in log else "eod" if "tick ok (eod)" in log else None
+
+
+def test_tick_gating_at_one_minute_cadence(tmp_path):
+    # a fresh repo per case: each intraday tick is the session's first poll, which is logged
+    cases = {930: None, 931: "intraday", 1600: "intraday", 1601: None,
+             1700: "eod", 1701: None, 1704: None, 1705: "eod", 2330: "eod", 2331: None}
+    for hm, want in cases.items():
+        rc, log = _tick(tmp_path / f"repo{hm}", 2, hm)
+        assert rc == 0 and _mode(log) == want, (hm, want, log)
+
+
+def test_tick_quiet_noop_poll_logs_nothing_after_the_first(tmp_path):
+    repo, env = tmp_path / "repo", {"PATH": _flock_on_path(tmp_path)}
+    rc, log1 = _tick(repo, 2, 1000, extra=env)
+    assert rc == 0 and "tick start (intraday) -- first poll of the session" in log1 and "tick ok (intraday)" in log1
+    rc, log2 = _tick(repo, 2, 1001, extra=env)
+    assert rc == 0 and log2 == log1                      # no-event poll: nothing written
+    rec = _stub(tmp_path, "py_rec", "echo 'run_intraday[stock]: recorded entry AAA @ 95.0950'\n")
+    rc, log3 = _tick(repo, 2, 1002, py=rec, extra=env)
+    assert rc == 0 and "recorded entry AAA" in log3      # event: output + ok logged
+    assert log3.count("tick ok (intraday)") == 2 and log3.count("tick start") == 1
+    rc, log4 = _tick(repo, 2, 1003, py="/usr/bin/false", extra=env)
+    assert rc == 1 and "tick FAILED (intraday), exit 1" in log4
+    rc, log5 = _tick(repo, 2, 1800, extra=env)           # EOD logs as before
+    assert rc == 0 and log5.count("tick start (eod)") == 1 and "tick ok (eod)" in log5
+
+
+def test_tick_first_poll_is_announced_again_after_a_failed_first(tmp_path):
+    repo = tmp_path / "repo"
+    rc, log = _tick(repo, 2, 931, py="/usr/bin/false")
+    assert rc == 1 and "FAILED" in log
+    rc, log = _tick(repo, 2, 932)
+    assert rc == 0 and log.count("first poll of the session") == 2 and "tick ok (intraday)" in log
+    rc, log = _tick(repo, 2, 933)
+    assert rc == 0 and log.count("first poll of the session") == 2
+
+
+def test_tick_intraday_timeout_is_50s_and_timer_fires_every_minute():
+    tick = TICK.read_text()
+    assert 'timeout "${GAPBOT_TIMEOUT:-50}"' in tick     # under the 1-minute trigger, env hook kept
+    timer = (REPO / "deploy" / "gapbot.timer").read_text()
+    assert "OnCalendar=*-*-* *:*:00" in timer and "AccuracySec=1s" in timer
+
+
+# --------------------------------------------------------- 8. GAPBOT_PROFILE
+
+ANCHOR_ENV = {k: v for k, v in os.environ.items() if k != "GAPBOT_PROFILE"}
+RAMP_ENV = {**ANCHOR_ENV, "GAPBOT_PROFILE": "ramp"}
+
+
+def test_intraday_stop_width_comes_from_config():
+    from live.config import stop_for_abs_gap
+    s = vi.fresh()
+    vi.register(s, "AAA", 95.0, 100.0, vi.D0)
+    r = check_watches(s, vi.D1, {"AAA": vi.bar(94, 95.5, 93, 95.2)}, vi.FILLER, adv_lookup=lambda tk: vi.ADV_BIG)
+    pos = s["open_positions"]["AAA"]
+    assert r["filled"] == ["AAA"]
+    assert pos["stop_price"] == pytest.approx(pos["entry"] * (1 - stop_for_abs_gap(5.0) / 100))
+
+
+def _ramp_checks():
+    """Runs in a subprocess with GAPBOT_PROFILE=ramp (test below)."""
+    from live import config, engine
+    assert config.PROFILE == "ramp" and config.ORDER_FLOOR == 5.0 and config.EXCLUDE_BELOW == 2.0
+    # a -4% gap still REGISTERS under ramp (EXCLUDE_BELOW stays 2.0); -13/-14 are "big" (>= RAMP_G)
+    s = vi.fresh()
+    step_one_day(s, vi.D0, {"S04": vi.bar(96, 97, 95, 96.5, prior_close=100),
+                            "B13": vi.bar(87, 88, 86, 87.5, prior_close=100),
+                            "B14": vi.bar(86, 87, 85, 86.5, prior_close=100)}, vi.FILLER)
+    assert set(s["pending"]) == {"S04", "B13", "B14"} and not s["open_positions"]
+    # slot_limit = clip(open + big waiting watches, 6, 9)
+    assert engine.slot_limit({}, s["pending"]) == 6
+    big3 = {t: {"gap_pct": g} for t, g in (("B13", -13.0), ("B14", -14.0), ("B15", -15.0))}
+    held = lambda n: {f"O{i:02d}": {} for i in range(n)}
+    assert engine.slot_limit(held(5), big3) == 8
+    assert engine.slot_limit(held(6), big3) == 9
+    assert engine.slot_limit(held(7), big3) == 9                                   # cap
+    assert engine.slot_limit(held(5), {**big3, "O00": {"gap_pct": -20.0}}) == 8    # a held ticker is not "waiting"
+    assert engine.slot_limit(held(5), {"X": {"gap_pct": -11.9}}) == 6              # under RAMP_G: no ramp
+    # the -4% watch is registered but has no order resting; the two big ones do
+    assert engine.resting_orders(["S04", "B13", "B14"], s["pending"], 6) == {"B13", "B14"}
+    snap = {"S04": vi.bar(95, 97, 94, 96), "B13": vi.bar(86, 88, 85, 87), "B14": vi.bar(85, 87, 84, 86)}
+    r = check_watches(s, vi.D1, snap, vi.FILLER, adv_lookup=lambda tk: vi.ADV_BIG)
+    assert set(r["filled"]) == {"B13", "B14"}
+    assert "S04" in s["pending"] and s["pending"]["S04"]["consumed_on"] == vi.D1    # touched, no order: missed wick
+    for tk in ("B13", "B14"):
+        pos = s["open_positions"][tk]
+        assert pos["stop_price"] == pytest.approx(pos["entry"] * (1 - config.RAMP_STOP / 100))   # flat 50%
+        assert pos["position_dollars"] == pytest.approx(config.CAPITAL / config.RAMP_SIZE_DIV, rel=2e-3)
+    assert s["open_positions"]["B14"]["position_dollars"] == pytest.approx(config.CAPITAL / 9)   # first fill, exact
+
+
+def test_ramp_profile_slot_limit_floor_stop_and_size():
+    code = ("import sys; sys.path.insert(0, 'scripts'); import test_intraday_blockers as t; "
+            "t._ramp_checks(); print('RAMP CHECKS OK')")
+    r = subprocess.run([PY, "-c", code], cwd=REPO, env=RAMP_ENV, capture_output=True, text=True)
+    assert r.returncode == 0 and "RAMP CHECKS OK" in r.stdout, r.stdout[-2000:] + r.stderr[-3000:]
+
+
+def test_verify_intraday_all_pass_under_ramp():
+    r = subprocess.run([PY, str(REPO / "scripts" / "verify_intraday.py")], cwd=REPO, env=RAMP_ENV,
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and "ALL PASS" in r.stdout, r.stdout[-3000:] + r.stderr[-3000:]
+    assert r.stdout.splitlines()[0] == "[gapbot profile=ramp]"
+
+
+@pytest.mark.parametrize("profile", ["anchor", "ramp"])
+def test_every_entry_point_prints_the_profile_banner_first(tmp_path, profile):
+    env = {**(RAMP_ENV if profile == "ramp" else ANCHOR_ENV), "GAPBOT_STATE_DIR": str(tmp_path)}
+    banner = f"[gapbot profile={profile}]"
+    run = lambda cmd: subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, text=True)
+    # run_intraday: empty ledger -> "nothing watched" before any client is built (no network)
+    r = run([PY, "live/run_intraday.py", "--variants", "stock"])
+    assert r.returncode == 0 and r.stdout.splitlines()[0] == banner and "nothing watched" in r.stdout, r.stdout + r.stderr
+    # run_daily: dry run with universe + bars stubbed (no parquet scan), fresh ledger steps an empty day
+    code = ("import sys; sys.argv = ['run_daily.py', '--dry-run', '--as-of', '2026-09-02', '--variants', 'stock']; "
+            "import live.run_daily as rd, live.fixture_data as fd; rd.load_universe = lambda: ['AAA']; "
+            "fd.fetch_universe_bars = lambda u, a: {}; sys.exit(rd.main())")
+    r = run([PY, "-c", code])
+    assert r.returncode == 0 and r.stdout.splitlines()[0] == banner, r.stdout + r.stderr
+    # catch_up_ledger: refuses a non-stock variant right after the banner
+    r = run([PY, "scripts/catch_up_ledger.py", "--variants", "call"])
+    assert r.returncode == 2 and r.stdout.splitlines()[0] == banner, r.stdout + r.stderr
 
 
 # ----------------------------------------- 6. ADV lookup failure fails closed

@@ -36,7 +36,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from live import state as state_mod
-from live.config import ADV_LOOKBACK, HORIZON, VARIANTS
+from live.config import ADV_LOOKBACK, HORIZON, PROFILE_BANNER, VARIANTS
 from live.engine import step_one_day
 from live.fillers import make_filler
 
@@ -96,6 +96,9 @@ def replay(state: dict, frames: dict, sessions, filler, chain_provider=None):
 
 
 def main() -> int:
+    # once per run, first line: a replay under the wrong profile would book
+    # the wrong slots/stops, so the profile is the first thing printed
+    print(PROFILE_BANNER)
     ap = argparse.ArgumentParser()
     ap.add_argument("--variants", default="stock", help="comma-separated; stock only unless you want synthetic-chain options (not supported here)")
     ap.add_argument("--through", default=None, help="last session to replay (YYYY-MM-DD); default = last date in the bars")

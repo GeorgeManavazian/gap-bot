@@ -72,8 +72,8 @@ from pandas.tseries.holiday import (
     USPresidentsDay, USThanksgivingDay, nearest_workday, sunday_to_monday,
 )
 
-from live.config import HORIZON, MAX_SLOTS, stop_for_abs_gap, bucket_name_for
-from live.engine import close_position, fill_slots, limit_touched, resting_orders
+from live.config import HORIZON, PROFILE, stop_for_abs_gap, bucket_name_for
+from live.engine import close_position, fill_slots, limit_touched, resting_orders, slot_limit
 from live.schwab_data import throttle, fetch_universe_bars, bars_for_today
 
 ET = "America/New_York"
@@ -238,6 +238,10 @@ def check_watches(state: dict, today: str, snap: dict, filler, chain_provider=No
     pending = state["pending"]
     trades = []
     extra = {"entry_time": stamp} if stamp else {}
+    # the poll's slot limit comes from the state at poll time, before this
+    # poll's exits -- the same accessor and the same point step_one_day
+    # reads it (anchor: MAX_SLOTS; ramp: engine.slot_limit's 6->9 ramp)
+    slots = slot_limit(open_positions, pending)
 
     # 1) exits on open positions -- stop first, then tp, same order as the
     # engine when both show inside one poll interval. No time exits here.
@@ -285,7 +289,7 @@ def check_watches(state: dict, today: str, snap: dict, filler, chain_provider=No
         if tk in open_positions:
             continue
         live.append(tk)
-    resting = resting_orders(live, pending, MAX_SLOTS - len(open_positions))
+    resting = resting_orders(live, pending, slots - len(open_positions))
     candidates, consumed = [], []
     for tk in live:
         w = pending[tk]
@@ -320,8 +324,11 @@ def check_watches(state: dict, today: str, snap: dict, filler, chain_provider=No
         snap[tk] = {**snap[tk], "adv": adv}
     consumed = [tk for tk in consumed if tk not in deferred]
     before = set(open_positions)
+    # (max_slots only passed under the ramp profile, same as step_one_day,
+    # so the anchor call shape is unchanged)
+    fill_kw = {"max_slots": slots} if PROFILE == "ramp" else {}
     cash = fill_slots(candidates, cash, open_positions, today, snap, filler, chain_provider,
-                      extra_fields=extra)
+                      extra_fields=extra, **fill_kw)
     filled = [tk for tk in open_positions if tk not in before]
     for tk in consumed:
         if tk in open_positions:

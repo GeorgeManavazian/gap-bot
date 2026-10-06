@@ -39,8 +39,10 @@ the poller must hold against engine.step_one_day():
      variant untouched, heartbeat written; the module never reaches an
      order endpoint;
   l. scripts/gap_bot_tick.sh window gating (fake DOW/HM, stub python):
-     09:35-16:00 ET intraday, 17:00-23:30 EOD, weekend/off-hours/
-     GAPBOT_INTRADAY=0 nothing, a failing run logs FAILED and exits 1;
+     09:31-16:00 ET intraday every minute, 17:00-23:30 EOD on minutes
+     that are a multiple of 5, weekend/off-hours/GAPBOT_INTRADAY=0
+     nothing, a failing run logs FAILED and exits 1, a no-event poll
+     after the session's first logs nothing;
   m. an ADV lookup failure intraday leaves the touched watch for the EOD
      run (not filled, not consumed) instead of filling it unfloored.
   The 2026-10-06 blockers also have pytest coverage:
@@ -57,6 +59,13 @@ there were free slots -- i.e. how often the rest-top-N choice actually
 bit. Reported as a number, not hidden.
 
 Run: .venv-live/bin/python scripts/verify_intraday.py
+     GAPBOT_PROFILE=ramp .venv-live/bin/python scripts/verify_intraday.py
+
+PROFILE NOTE (2026-10-06): every expectation below is derived from
+live/config.py / engine.slot_limit at run time (slot count, size divisor,
+stop width), never a literal 20 or a bucket stop, so the same script is
+the intraday-vs-EOD parity check under both GAPBOT_PROFILE values. The
+banner printed first says which one ran.
 
 ENV NOTE (found 2026-10-05): the cached parquets store Date as
 datetime64[ms]; where np.datetime64(Timestamp) yields microseconds the
@@ -79,8 +88,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from live.config import CAPITAL, HORIZON, MAX_SLOTS, VARIANTS
-from live.engine import step_one_day, SLIP
+from live.config import CAPITAL, HORIZON, MAX_SLOTS, PROFILE, PROFILE_BANNER, SIZE_DIV, VARIANTS, stop_for_abs_gap
+from live.engine import step_one_day, slot_limit, SLIP
 from live.fillers import make_filler
 from live.intraday import (
     check_watches, drop_stale_quotes, state_is_stale, previous_session, fetch_quotes, ET,
@@ -127,15 +136,20 @@ def scenario_b():
     pos = s["open_positions"].get("AAA")
     ok = check(r["filled"] == ["AAA"] and pos is not None, "filled AAA")
     ok &= check(pos and abs(pos["entry"] - 95.0 * (1 + SLIP)) < 1e-9, "entry = gap_open * (1+slip)")
-    ok &= check(pos and abs(pos["position_dollars"] - CAPITAL / MAX_SLOTS) < 1e-6, "size = equity/MAX_SLOTS")
+    ok &= check(pos and abs(pos["position_dollars"] - CAPITAL / (SIZE_DIV or MAX_SLOTS)) < 1e-6,
+                f"size = equity/{SIZE_DIV or MAX_SLOTS} (config SIZE_DIV or MAX_SLOTS)")
+    ok &= check(pos and abs(pos["stop_price"] - pos["entry"] * (1 - stop_for_abs_gap(5.0) / 100)) < 1e-9,
+                f"stop width = config.stop_for_abs_gap(5.0) = {stop_for_abs_gap(5.0)}% (profile-aware)")
     ok &= check(pos and pos["entry_time"] == "T10:00" and pos["days_held"] == 0, "entry_time stamped, days_held 0")
     # EOD for the same session: the settled candle shows the day's low went
     # through the stop later in the day -- must NOT be checked (entry day).
     eod = step_one_day(s, D1, {"AAA": bar(94, 95.5, 50, 60, prior_close=100)}, FILLER)
     ok &= check("AAA" in s["open_positions"] and not eod["trades"], "EOD did not stop out an entry-day position")
     ok &= check(s["open_positions"]["AAA"]["days_held"] == 0, "days_held still 0 after entry-day EOD")
-    # Next session it IS checked, days_held -> 1.
-    eod2 = step_one_day(s, D2, {"AAA": bar(60, 61, 50, 55, prior_close=60)}, FILLER)
+    # Next session it IS checked, days_held -> 1 (the low is derived from the
+    # position's own stop, whatever width the profile gave it).
+    lo = pos["stop_price"] - 1
+    eod2 = step_one_day(s, D2, {"AAA": bar(lo + 10, lo + 11, lo, lo + 5, prior_close=lo + 10)}, FILLER)
     ok &= check(len(eod2["trades"]) == 1 and eod2["trades"][0]["exit_reason"] == "stop"
                 and eod2["trades"][0]["days_held"] == 1, "stopped the next session at days_held 1")
     return ok
@@ -271,16 +285,21 @@ def scenario_h():
     ok = check(not r["filled"] and "AAA" in s["pending"], "range entirely above gap_open: no fill, watch keeps resting")
     step_one_day(s, D1, {"AAA": bar(96, 99, 95.5, 98, prior_close=100)}, FILLER)
     ok &= check("AAA" in s["pending"] and not s["open_positions"], "EOD agrees: still resting")
-    # one free slot, two watches touch: only the bigger gap had an order resting
+    # one free slot, two watches touch: only the bigger gap had an order resting.
+    # Fillers and BIG are -15% gaps so the count is MAX_SLOTS-1 under both
+    # profiles (ramp: slot_limit ramps one per >=12% watch up to RAMP_MAX);
+    # SMALL is -6%, above the ramp ORDER_FLOOR, so priority is what decides.
     s = fresh()
-    for i in range(MAX_SLOTS - 1):  # fill 19 slots
-        register(s, f"F{i:02d}", 90.0, 100.0, D0)
-    step_one_day(s, D1, {f"F{i:02d}": bar(89, 91, 88, 90, prior_close=100) for i in range(MAX_SLOTS - 1)}, FILLER)
-    assert len(s["open_positions"]) == MAX_SLOTS - 1
-    register(s, "BIG", 90.0, 100.0, D1)    # -10%
-    register(s, "SMALL", 97.0, 100.0, D1)  # -3%
+    n_fill = MAX_SLOTS - 1
+    for i in range(n_fill):  # fill all slots but one
+        register(s, f"F{i:02d}", 85.0, 100.0, D0)
+    step_one_day(s, D1, {f"F{i:02d}": bar(84, 86, 83, 85, prior_close=100) for i in range(n_fill)}, FILLER)
+    assert len(s["open_positions"]) == n_fill, (len(s["open_positions"]), n_fill)
+    register(s, "BIG", 85.0, 100.0, D1)    # -15%
+    register(s, "SMALL", 94.0, 100.0, D1)  # -6%
     register(s, "QUIET", 96.0, 100.0, D1)  # -4%, never touches
-    snap = {"BIG": bar(89, 91, 88, 90.5), "SMALL": bar(96, 98, 95, 97.5), "QUIET": bar(94, 95, 93, 94)}
+    assert slot_limit(s["open_positions"], s["pending"]) - n_fill == 1, "scenario needs exactly one free slot"
+    snap = {"BIG": bar(84, 86, 83, 85.5), "SMALL": bar(93, 95, 92, 94.5), "QUIET": bar(94, 95, 93, 94)}
     r = check_watches(s, D2, snap, FILLER, adv_lookup=lambda tk: ADV_BIG)
     ok &= check(r["filled"] == ["BIG"], "only the biggest-gap watch (the one with an order resting) fills")
     ok &= check("SMALL" not in s["open_positions"] and s["pending"]["SMALL"].get("consumed_on") == D2,
@@ -447,7 +466,9 @@ def scenario_k():
                     and st["open_positions"]["AAA"]["entry_time"].startswith(D1)
                     and st["last_run_date"] == D0, "touch persisted; entry-stamped; last_run_date untouched")
         hb = json.load(open(os.path.join(tmp, "account", "intraday.json")))
-        ok &= check(hb["session"] == D1 and hb["entries"] == ["AAA"] and "AAA" in hb["watched"], "heartbeat written")
+        ok &= check(hb["session"] == D1 and hb["entries"] == ["AAA"] and "AAA" in hb["watched"]
+                    and hb["profile"] == PROFILE, "heartbeat written, carries the profile")
+        ok &= check(out.startswith(PROFILE_BANNER), "profile banner is the poll's first line")
         ok &= check(all(name == "get_quotes" or name == "price_history" for name, _ in c.calls)
                     and not any("order" in n for n in dir(c)), "only data-read endpoints exist/were called")
         # EOD already ran this session -> no-op
@@ -485,23 +506,36 @@ def scenario_k():
     return ok
 
 
+def _stub_recording_py(d: str) -> str:
+    """A stand-in python that prints what run_intraday prints on a fill."""
+    p = Path(d, "py_recording")
+    p.write_text("#!/bin/bash\necho 'run_intraday[stock]: recorded entry AAA @ 95.0950'\n")
+    p.chmod(0o755)
+    return str(p)
+
+
 def scenario_l():
     print("l. gap_bot_tick.sh window gating")
     repo_root = Path(__file__).parent.parent
     script = repo_root / "scripts" / "gap_bot_tick.sh"
     ok = True
 
-    def tick(dow, hm, py="/bin/echo", env=None):
-        with tempfile.TemporaryDirectory() as repo:
+    def tick(dow, hm, py="/bin/echo", env=None, repo=None):
+        """One tick in a fresh temp repo (or `repo`, to chain polls in one
+        session). Returns (rc, tick.log text)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = repo or tmp
             e = {**os.environ, "GAPBOT_REPO": repo, "GAPBOT_VENV_PY": py,
                  "GAPBOT_FAKE_DOW": str(dow), "GAPBOT_FAKE_HM": str(hm), **(env or {})}
             r = subprocess.run(["bash", str(script)], env=e, capture_output=True, text=True)
             log = Path(repo, "data/live/logs/tick.log")
             return r.returncode, (log.read_text() if log.exists() else "")
 
-    cases = [(2, 934, None), (2, 935, "intraday"), (2, 1000, "intraday"), (2, 1600, "intraday"),
-             (2, 1601, None), (2, 1659, None), (2, 1700, "eod"), (2, 2330, "eod"), (2, 2331, None),
-             (6, 1000, None), (7, 1800, None)]
+    # a fresh repo per case, so each intraday tick is the session's first
+    # poll (the one a no-event poll still logs)
+    cases = [(2, 930, None), (2, 931, "intraday"), (2, 1000, "intraday"), (2, 1600, "intraday"),
+             (2, 1601, None), (2, 1659, None), (2, 1700, "eod"), (2, 1701, None), (2, 1705, "eod"),
+             (2, 2330, "eod"), (2, 2331, None), (6, 1000, None), (7, 1800, None)]
     bad = []
     for dow, hm, want in cases:
         rc, log = tick(dow, hm)
@@ -509,6 +543,16 @@ def scenario_l():
         if rc != 0 or got != want:
             bad.append((dow, hm, want, got, rc))
     ok &= check(not bad, f"window gating correct for {len(cases)} (dow, HHMM) cases" + (f" -- BAD: {bad}" if bad else ""))
+    # (a dev box without flock(1) logs "running unlocked" on every tick; the VPS has it)
+    quiet = lambda log: "\n".join(ln for ln in log.splitlines() if "flock not on PATH" not in ln)
+    with tempfile.TemporaryDirectory() as repo:
+        rc1, log1 = tick(2, 1000, repo=repo)
+        rc2, log2 = tick(2, 1001, repo=repo)
+        ok &= check(rc1 == 0 and rc2 == 0 and "first poll of the session" in log1 and quiet(log2) == quiet(log1),
+                    "no-event poll after the session's first writes nothing to tick.log")
+        rc3, log3 = tick(2, 1002, repo=repo, py=_stub_recording_py(repo))
+        ok &= check(rc3 == 0 and log3.count("tick ok (intraday)") == 2 and "recorded entry" in log3,
+                    "a poll that recorded an event is logged with its output")
     rc, log = tick(2, 1000, env={"GAPBOT_INTRADAY": "0"})
     ok &= check(rc == 0 and "tick" not in log, "GAPBOT_INTRADAY=0 leaves the market-hours window a no-op")
     rc2, log2 = tick(2, 1800, env={"GAPBOT_INTRADAY": "0"})
@@ -536,7 +580,7 @@ def scenario_m():
 
 
 def part2_contention() -> bool:
-    print("\nPart 2: slot contention in the 2yr anchor replay (resting-limit touches vs free slots)")
+    print(f"\nPart 2: slot contention in the 2yr replay, profile={PROFILE} (resting-limit touches vs free slots)")
     import pandas as pd
     from slot_and_priority_sweep import BARS_DIR, load_ticker, TickerView
     tickers_data, longest = {}, None
@@ -580,7 +624,8 @@ def part2_contention() -> bool:
                 exits_today += dh >= HORIZON
             else:
                 exits_today += (r["l"] <= pos["stop_price"] or r["h"] >= pos["tp_price"] or dh >= HORIZON)
-        free = MAX_SLOTS - len(state["open_positions"]) + exits_today
+        # the day's slot limit the engine itself will read (anchor: MAX_SLOTS; ramp: 6->9)
+        free = slot_limit(state["open_positions"], state["pending"]) - len(state["open_positions"]) + exits_today
         n_days += 1
         if touches:
             n_touch_days += 1
@@ -598,6 +643,7 @@ def part2_contention() -> bool:
 
 
 def main():
+    print(PROFILE_BANNER)
     print("Part 1: synthetic invariants")
     results = [f() for f in (scenario_a, scenario_b, scenario_c, scenario_d, scenario_e, scenario_f, scenario_g,
                              scenario_h, scenario_i, scenario_j, scenario_k, scenario_l, scenario_m)]

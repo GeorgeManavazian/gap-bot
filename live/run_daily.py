@@ -53,7 +53,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))  # so `live.*` imports work run from anywhere
 
 from live import state as state_mod
-from live.config import VARIANTS
+from live.config import PROFILE_BANNER, VARIANTS
 from live.engine import step_one_day
 from live.fillers import make_filler
 from live.intraday import previous_session, state_is_stale
@@ -121,6 +121,9 @@ def main() -> int:
                          "replayed with scripts/catch_up_ledger.py, after which this is a no-op anyway.")
     args = ap.parse_args()
     variants = args.variants.split(",") if args.variants else list(VARIANTS)
+    # once per run, first line: the profile is process-wide and read from the
+    # environment, so the log must show which one this step actually ran
+    print(PROFILE_BANNER)
 
     universe = load_universe()
 

@@ -8,10 +8,15 @@ Type=oneshot
 User=ubuntu
 WorkingDirectory=/home/ubuntu/gap-bot
 ExecStart=/bin/bash /home/ubuntu/gap-bot/scripts/gap_bot_tick.sh
+# Paper-trading profile (2026-10-06): "ramp" = 6->9 slots on >=12% gap watches,
+# 5% entry floor, flat 50% stop (live/config.py). Process-wide: ramp REPLACES
+# anchor for every variant in the tick. Unset or "anchor" = the old config.
+# Every run prints the active profile; check the log after any deploy.
+Environment=GAPBOT_PROFILE=ramp
 # One EOD run pulls daily bars for ~500 tickers sequentially -- generous
 # margin over the wheel bot's own measured pull time for a similar count.
 # This unit serves both tick modes; this is the EOD ceiling. Intraday
-# polls are capped at 240s inside gap_bot_tick.sh (`timeout`), under the
-# 5-minute cadence, so a hung quote pull never holds the tick lock across
+# polls are capped at 50s inside gap_bot_tick.sh (`timeout`), under the
+# 1-minute cadence, so a hung quote pull never holds the tick lock across
 # polls -- a unit-level value can't differ per mode.
 TimeoutStartSec=1800

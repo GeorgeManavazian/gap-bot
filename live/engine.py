@@ -54,9 +54,25 @@ from __future__ import annotations
 from live.config import (
     MAX_SLOTS, HORIZON, SLIPPAGE_BPS, MAX_PCT_OF_ADV,
     EXCLUDE_BELOW, stop_for_abs_gap, bucket_name_for,
+    PROFILE, RAMP_BASE, RAMP_MAX, RAMP_G, SIZE_DIV, ORDER_FLOOR,
 )
 
 SLIP = SLIPPAGE_BPS / 10_000.0
+
+
+def slot_limit(open_positions: dict, pending: dict) -> int:
+    """How many slots the book may use right now. PROFILE "anchor": the fixed
+    MAX_SLOTS (read at call time, so backtests that patch engine.MAX_SLOTS
+    still work). PROFILE "ramp": RAMP_BASE, plus one for each waiting watch
+    with gap <= -RAMP_G% that is not already held, capped at RAMP_MAX. Pure
+    function of state; step_one_day calls it on the state it was handed
+    (before that day's exits and new-gap registration), the intraday poller
+    on the state at poll time -- both through this one accessor."""
+    if PROFILE != "ramp":
+        return MAX_SLOTS
+    big = sum(1 for tk, w in pending.items()
+              if tk not in open_positions and w["gap_pct"] <= -RAMP_G)
+    return int(min(RAMP_MAX, max(RAMP_BASE, len(open_positions) + big)))
 
 # Position fields that get their own named column in a trade record; every
 # other key on the position (filler extras like option symbols/strikes,
@@ -75,9 +91,14 @@ def limit_touched(row: dict, gap_open: float) -> bool:
 def resting_orders(live: list, pending: dict, free: int) -> set:
     """The watches that have an order resting today: the `free` biggest
     gaps among `live` (ticker as tie-break, same as the backtest's sort).
-    Known from state alone -- no look-ahead into which will touch."""
+    Known from state alone -- no look-ahead into which will touch.
+    ORDER_FLOOR (ramp profile): watches with |gap| below it get no order, but
+    stay registered -- see live/config.py for why that must not move to
+    registration."""
     if free <= 0:
         return set()
+    if ORDER_FLOOR is not None:
+        live = [t for t in live if pending[t]["gap_pct"] <= -ORDER_FLOOR]
     return set(sorted(live, key=lambda t: (pending[t]["gap_pct"], t))[:free])
 
 
@@ -107,7 +128,8 @@ def close_position(pos: dict, tk: str, exit_price: float, reason: str, days_held
 
 
 def fill_slots(fill_candidates: list, cash: float, open_positions: dict, today: str,
-               bars: dict, filler, chain_provider=None, extra_fields: dict | None = None) -> float:
+               bars: dict, filler, chain_provider=None, extra_fields: dict | None = None,
+               max_slots: int | None = None) -> float:
     """Step 3 of the day: fill candidates into open slots, equal-weight.
     Mutates open_positions, returns the new cash. A candidate is
     (tk, entry_price, tp_price, bucket, stop_w, gap_pct, gap_date). Sorted
@@ -121,9 +143,12 @@ def fill_slots(fill_candidates: list, cash: float, open_positions: dict, today: 
     slot, and does not fall back to the next candidate taking its place
     (matching the backtest's own doctrine: a signal either fills as
     scoped or it doesn't, no substitution). `extra_fields` (e.g. an
-    intraday entry_time) is stamped onto every position opened here."""
+    intraday entry_time) is stamped onto every position opened here.
+    `max_slots` (None = MAX_SLOTS) is the day's slot limit from slot_limit();
+    position size is equity / SIZE_DIV when the profile sets one (ramp: 9),
+    else equity / MAX_SLOTS exactly as before."""
     fill_candidates.sort(key=lambda x: (-abs(x[5]), x[0]))
-    free = MAX_SLOTS - len(open_positions)
+    free = (MAX_SLOTS if max_slots is None else max_slots) - len(open_positions)
     filled = 0
     for tk, entry_price, tp_price, bucket, stop_w, gap_pct, gap_date in fill_candidates:
         if filled >= free:
@@ -131,7 +156,7 @@ def fill_slots(fill_candidates: list, cash: float, open_positions: dict, today: 
         mtm = sum(filler.mark(pp, bars.get(p, {}).get("c", pp["entry"]), chain_provider)
                   for p, pp in open_positions.items())
         equity_now = cash + mtm
-        size_dollars = equity_now / MAX_SLOTS
+        size_dollars = equity_now / (SIZE_DIV or MAX_SLOTS)
         if MAX_PCT_OF_ADV is not None:
             adv = bars.get(tk, {}).get("adv")
             if adv is not None and size_dollars > MAX_PCT_OF_ADV * adv:
@@ -160,6 +185,9 @@ def step_one_day(state: dict, today: str, bars: dict, filler, chain_provider=Non
     open_positions = state["open_positions"]
     pending = state["pending"]
     day_trades = []
+    # the day's slot limit comes from the state as handed in (before exits
+    # and new-gap registration) -- the same point the 10yr backtest read it
+    slots_today = slot_limit(open_positions, pending)
 
     # 1) exits on open positions
     for tk in list(open_positions):
@@ -252,7 +280,7 @@ def step_one_day(state: dict, today: str, bars: dict, filler, chain_provider=Non
     # price actually traded through (resting-limit fill). A touch on a
     # watch WITHOUT an order is a missed wick: the watch is consumed,
     # nothing is bought -- the price got there and we weren't in line.
-    free = MAX_SLOTS - len(open_positions)
+    free = slots_today - len(open_positions)
     resting = resting_orders(live, pending, free)
     fill_candidates = []
     for tk in live:
@@ -279,7 +307,10 @@ def step_one_day(state: dict, today: str, bars: dict, filler, chain_provider=Non
 
     # 3) fill the touched resting orders into the open slots, equal-weight
     # (see fill_slots for the refusal doctrine).
-    cash = fill_slots(fill_candidates, cash, open_positions, today, bars, filler, chain_provider)
+    # (max_slots only passed under the ramp profile, so the anchor path -- and
+    # backtests that swap in their own fill_slots -- keep the old call shape)
+    fill_kw = {"max_slots": slots_today} if PROFILE == "ramp" else {}
+    cash = fill_slots(fill_candidates, cash, open_positions, today, bars, filler, chain_provider, **fill_kw)
 
     # 4) mark equity -- also persists each position's last-close price so a
     # dashboard reading state.json (never re-fetches quotes itself) can show
