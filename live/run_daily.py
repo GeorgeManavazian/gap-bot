@@ -1,26 +1,37 @@
 """Gap-bot's daily entry point -- one call per real trading day, after the
-close. Pulls today's bars, steps the anchor config forward one day, persists
-state, appends the trade/equity logs. Refuses to double-run the same day
-(the last_run_date guard in state.json).
+close. Pulls today's bars ONCE, then steps all three instrument variants
+forward one day each (stock/call/spread, live/config.py VARIANTS) --
+same signal, same day, three independent $100k paper accounts. Refuses to
+double-run a variant on the same day (that variant's own last_run_date
+guard in its state.json) -- a variant added after the others (call/spread,
+2026-09-08) simply starts fresh from today rather than backfilling.
 
 "Today" is driven by the DATA, not the wall clock: a cheap one-ticker pull
 (schwab_data.latest_session_date) finds the most recent session Schwab
 actually has a candle for, and that date -- not pd.Timestamp.now() -- is
-what gets compared against last_run_date and passed to the engine. Fixed
-2026-09-07 after finding + reproducing a real bug: the VPS clock is UTC,
-which rolls to the next calendar date while the ET trading day is still
-open, so wall-clock "today" could both (a) phantom-fill every pending
-watch by tricking the engine into thinking a new day had started mid-
-session, and (b) on a market holiday, relabel the last real session's
+what gets compared against each variant's last_run_date and passed to the
+engine. Fixed 2026-09-07 after finding + reproducing a real bug: the VPS
+clock is UTC, which rolls to the next calendar date while the ET trading
+day is still open, so wall-clock "today" could both (a) phantom-fill every
+pending watch by tricking the engine into thinking a new day had started
+mid-session, and (b) on a market holiday, relabel the last real session's
 stale bar as the holiday's date instead of recognizing nothing new
 happened. Driving the date off the data fixes both, and as a side
 effect makes a same-session retrigger cheap (one ticker, not 500) --
 the full universe pull only happens once a genuinely new session exists.
 
+The call/spread variants additionally need live option chain quotes
+(live/schwab_options.py) -- NOT YET smoke-tested against a live account,
+see that module's docstring. One variant's chain-provider failing to
+price a candidate skips that candidate for that variant only (fillers.py
+doctrine); it never stops the stock variant or crashes the tick.
+
 Live:     .venv-live/bin/python live/run_daily.py
 Dry run:  .venv-live/bin/python live/run_daily.py --dry-run --as-of 2026-08-18
           (replays a historical date from the cached parquets instead of
-          calling Schwab -- for exercising the pipeline before it's live)
+          calling Schwab, and prices call/spread off a synthetic
+          Black-Scholes chain instead of a live one -- for exercising the
+          pipeline before it's live, not a performance validation)
 
 Run from code/gap-bot/ (paths.py resolves data/live/ relative to cwd, same
 convention as the wheel bot's live/paths.py).
@@ -35,7 +46,9 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))  # so `live.*` imports work run from anywhere
 
 from live import state as state_mod
+from live.config import VARIANTS
 from live.engine import step_one_day
+from live.fillers import make_filler
 from live.schwab_data import bars_for_today
 
 UNIVERSE_CSV = Path(__file__).parent.parent / "data" / "sp500_constituents.csv"
@@ -46,61 +59,79 @@ def load_universe() -> list[str]:
     return [t.replace(".", "-") for t in df["Symbol"].tolist()]
 
 
+def run_variant(variant: str, session_date: str, bars: dict, chain_provider) -> None:
+    state = state_mod.load_state(variant)
+    if state["last_run_date"] == session_date:
+        print(f"run_daily[{variant}]: already ran for {session_date} -- refusing to double-step.")
+        return
+    filler = make_filler(variant, VARIANTS[variant])
+    result = step_one_day(state, session_date, bars, filler, chain_provider)
+    for t in result["trades"]:
+        state_mod.append_trade(t, variant)
+    state_mod.append_snapshot({
+        "date": session_date, "cash": round(result["state"]["cash"], 2),
+        "equity": round(result["equity"], 2), "n_open": result["n_open"],
+        "n_pending": result["n_pending"],
+    }, variant)
+    state_mod.save_state(result["state"], variant)
+    print(f"run_daily[{variant}]: {len(result['trades'])} exits today, "
+          f"{result['n_open']} open, {result['n_pending']} pending, "
+          f"equity ${result['equity']:,.2f}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true",
-                    help="use cached local parquets instead of live Schwab data")
+                    help="use cached local parquets + a synthetic chain instead of live Schwab data")
     ap.add_argument("--as-of", default=None,
                     help="dry-run only: replay this date (YYYY-MM-DD) as 'today'")
+    ap.add_argument("--variants", default=None,
+                    help="comma-separated subset of stock,call,spread (default: all)")
     args = ap.parse_args()
+    variants = args.variants.split(",") if args.variants else list(VARIANTS)
 
     universe = load_universe()
-    state = state_mod.load_state()
 
     if args.dry_run:
-        # Controlled replay path: as_of drives the session date directly,
-        # not subject to the live wall-clock bug below.
         from live import fixture_data
+        from live.fixture_options import make_fixture_chain_provider
         as_of = args.as_of or pd.Timestamp.now().normalize().isoformat()[:10]
         session_date = pd.Timestamp(as_of).normalize().date().isoformat()
-        if state["last_run_date"] == session_date:
-            print(f"run_daily: already ran for {session_date} -- refusing to double-step.")
-            return
         universe_bars = fixture_data.fetch_universe_bars(universe, as_of)
+        bars = bars_for_today(universe_bars)
+        chain_provider = make_fixture_chain_provider(lambda tk: bars.get(tk, {}).get("c"))
+        client = None
     else:
         from live.schwab_data import get_client, fetch_universe_bars, latest_session_date
+        from live.schwab_options import make_chain_provider
         client = get_client()
         # Cheap one-ticker check BEFORE the full pull: session_date comes
         # from the data itself, not pd.Timestamp.now() (that was the bug --
-        # see the module docstring). If it's the same session already
-        # processed, skip now and never pay for the other ~500 tickers.
+        # see the module docstring). If every variant already processed
+        # this session, skip now and never pay for the other ~500 tickers.
         latest = latest_session_date(client)
         if latest is None:
             print("run_daily: couldn't determine the latest session date (reference pull failed) -- skipping this tick.")
             return
         session_date = latest.isoformat()
-        if state["last_run_date"] == session_date:
-            print(f"run_daily: no new session yet (last session {session_date} already processed) -- skipping the full pull.")
+        if all(state_mod.load_state(v)["last_run_date"] == session_date for v in variants):
+            print(f"run_daily: no new session yet (last session {session_date} already processed by every requested variant) -- skipping the full pull.")
             return
         universe_bars = fetch_universe_bars(client, universe)
+        bars = bars_for_today(universe_bars)
+        chain_provider = make_chain_provider(client)
 
-    bars = bars_for_today(universe_bars)
     print(f"run_daily: {session_date} -- {len(bars)}/{len(universe)} tickers with usable bars")
 
-    result = step_one_day(state, session_date, bars)
-
-    for t in result["trades"]:
-        state_mod.append_trade(t)
-    state_mod.append_snapshot({
-        "date": session_date, "cash": round(result["state"]["cash"], 2),
-        "equity": round(result["equity"], 2), "n_open": result["n_open"],
-        "n_pending": result["n_pending"],
-    })
-    state_mod.save_state(result["state"])
-
-    print(f"run_daily: {len(result['trades'])} exits today, "
-          f"{result['n_open']} open, {result['n_pending']} pending, "
-          f"equity ${result['equity']:,.2f}")
+    for variant in variants:
+        cp = None if variant == "stock" else chain_provider
+        try:
+            run_variant(variant, session_date, bars, cp)
+        except Exception as e:
+            # One variant's failure (e.g. a chain-provider outage) must
+            # never take down the others -- same one-bad-thing doctrine as
+            # fetch_universe_bars' per-ticker try/except.
+            print(f"run_daily[{variant}]: FAILED, skipped this tick: {e}")
 
 
 if __name__ == "__main__":

@@ -15,11 +15,16 @@ def in_state(*parts: str) -> str:
     return os.path.join(state_root(), *parts)
 
 
-def account_paths() -> dict:
-    """One paper account for now (the anchor config, $100k). Same
-    state.json/trades.jsonl/snapshots.jsonl shape as the wheel bot's
-    per-account files, so a future dashboard can share tooling."""
-    d = in_state("account")
+def account_paths(variant: str = "stock") -> dict:
+    """One paper account per instrument variant -- stock (the original
+    anchor, live since 2026-09-07), call, spread. `variant="stock"` keeps
+    the original `account/` directory name so the already-running live
+    state on the VPS is never relocated; the two new variants get their
+    own sibling directories. Same state.json/trades.jsonl/snapshots.jsonl
+    shape as the wheel bot's per-account files, so a future dashboard can
+    share tooling."""
+    dirname = "account" if variant == "stock" else f"account_{variant}"
+    d = in_state(dirname)
     return {"dir": d,
             "state": os.path.join(d, "state.json"),
             "trades": os.path.join(d, "trades.jsonl"),
