@@ -61,7 +61,10 @@ def load_ticker(path):
     # should only cost that day's liquidity-floor check (handled downstream
     # via get_adv() -> None), not silently drop the whole bar.
     df = df.dropna(subset=["Date", "Open", "High", "Low", "Close"])
-    df["Date"] = pd.to_datetime(df["Date"])
+    # One canonical unit at the boundary. The cached parquets store Date as
+    # datetime64[ms] and pd.to_datetime keeps whatever unit the file had;
+    # every consumer gets pandas' default [ns] instead.
+    df["Date"] = pd.to_datetime(df["Date"]).astype("datetime64[ns]")
     df = df.sort_values("Date").drop_duplicates("Date").reset_index(drop=True)
     if len(df) < HORIZON + 5:
         return None
@@ -71,10 +74,20 @@ def load_ticker(path):
 ADV_LOOKBACK = 20
 
 
+def _key(day):
+    # Lookup key for TickerView.idx. np.datetime64 hashes by unit as well as
+    # value, so an [ms] key from the parquet never equals the [us] that
+    # np.datetime64(Timestamp) yields in this env (or the [D] a datetime.date
+    # gives) and every lookup silently misses -> 0 trades. Collapse whatever
+    # the caller hands over (Timestamp, np.datetime64 of any unit,
+    # datetime.date) to one unit on both sides of the dict.
+    return pd.Timestamp(day).to_datetime64().astype("datetime64[ns]")
+
+
 class TickerView:
     def __init__(self, df, adv_lookback=ADV_LOOKBACK):
         self.dates = df["Date"].values
-        self.idx = {d: i for i, d in enumerate(self.dates)}
+        self.idx = {_key(d): i for i, d in enumerate(self.dates)}
         self.o = df["Open"].values
         self.h = df["High"].values
         self.l = df["Low"].values
@@ -88,19 +101,19 @@ class TickerView:
         self.adv = dollar_vol.rolling(adv_lookback).mean().shift(1).values
 
     def get(self, day):
-        i = self.idx.get(np.datetime64(day))
+        i = self.idx.get(_key(day))
         if i is None:
             return None
         return (self.o[i], self.h[i], self.l[i], self.c[i])
 
     def get_prior_close(self, day):
-        i = self.idx.get(np.datetime64(day))
+        i = self.idx.get(_key(day))
         if i is None or i == 0:
             return None
         return self.c[i - 1]
 
     def get_adv(self, day):
-        i = self.idx.get(np.datetime64(day))
+        i = self.idx.get(_key(day))
         if i is None:
             return None
         v = self.adv[i]
