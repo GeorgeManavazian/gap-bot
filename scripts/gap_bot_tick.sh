@@ -25,7 +25,8 @@
 # Reuses the wheel bot's Python venv (PY below) -- same schwab-py, pandas,
 # numpy already installed there; gap-bot has no venv of its own on the VPS.
 # GAPBOT_REPO / GAPBOT_VENV_PY / GAPBOT_FAKE_* are testability hooks, unset
-# in production.
+# in production. Both runs are STOCK VARIANT ONLY (2026-10-06); the tick
+# takes a lock so two ticks never write the same ledger at once.
 set -uo pipefail
 REPO="${GAPBOT_REPO:-/home/ubuntu/gap-bot}"
 PY="${GAPBOT_VENV_PY:-/home/ubuntu/etf-bot/.venv-live/bin/python}"
@@ -55,9 +56,33 @@ else
     exit 0
 fi
 
+# One tick at a time: a slow poll must never overlap the next trigger or
+# the EOD run (two writers on the same state.json). The kernel drops the
+# lock when the holder exits, so a crash can't leave it stale. flock(1) is
+# util-linux (always on the VPS); a dev box without it runs unlocked.
+if command -v flock >/dev/null 2>&1; then
+    # An unopenable lock file (e.g. root-owned from a manual run) must fail
+    # loudly, not read as "held" on every tick forever.
+    exec 9>"$LOGDIR/.tick.lock" || { log "lock open failed ($LOGDIR/.tick.lock)"; exit 1; }
+    flock -n 9 || { log "tick skipped (lock held)"; exit 0; }
+else
+    log "flock not on PATH, running unlocked"
+fi
+
+# Stock variant only (2026-10-06): call/spread stay paused and are not
+# stepped in production. Intraday ticks get a timeout under the 5-minute
+# cadence so a hung quote pull can't hold the lock across polls; the EOD
+# run keeps gapbot.service's TimeoutStartSec as its ceiling. coreutils
+# timeout(1) is on the VPS; without it the service timeout still applies.
+# GAPBOT_TIMEOUT (seconds) is a test hook, unset in production.
+RUN=("$PY" "$SCRIPT" --variants stock)
+if [ "$MODE" = intraday ] && command -v timeout >/dev/null 2>&1; then
+    RUN=(timeout "${GAPBOT_TIMEOUT:-240}" "${RUN[@]}")
+fi
+
 log "tick start ($MODE)"
 OUT="$(mktemp)"
-"$PY" "$SCRIPT" > "$OUT" 2>&1
+"${RUN[@]}" > "$OUT" 2>&1
 RC=$?
 cat "$OUT" >> "$LOGDIR/tick.log"
 if [ "$RC" -ne 0 ]; then

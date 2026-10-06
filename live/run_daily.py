@@ -4,7 +4,14 @@ forward one day each (stock/call/spread, live/config.py VARIANTS) --
 same signal, same day, three independent $100k paper accounts. Refuses to
 double-run a variant on the same day (that variant's own last_run_date
 guard in its state.json) -- a variant added after the others (call/spread,
-2026-09-08) simply starts fresh from today rather than backfilling.
+2026-09-08) simply starts fresh from today rather than backfilling. Also
+refuses (exit 1, nothing written) to step a ledger whose last_run_date is
+not the previous NYSE session (2026-10-06): the engine never backfills, so
+a missed evening run or a pause has to be replayed with
+scripts/catch_up_ledger.py first. `--allow-stale-from YYYY-MM-DD` steps
+anyway, but only while last_run_date equals that exact date -- for the
+one case the calendar gets wrong (an unscheduled closure makes a real
+one-session gap look like a missed run); it can't be left in a cron line.
 
 "Today" is driven by the DATA, not the wall clock: a cheap one-ticker pull
 (schwab_data.latest_session_date) finds the most recent session Schwab
@@ -49,6 +56,7 @@ from live import state as state_mod
 from live.config import VARIANTS
 from live.engine import step_one_day
 from live.fillers import make_filler
+from live.intraday import previous_session, state_is_stale
 from live.schwab_data import bars_for_today
 
 UNIVERSE_CSV = Path(__file__).parent.parent / "data" / "sp500_constituents.csv"
@@ -59,11 +67,30 @@ def load_universe() -> list[str]:
     return [t.replace(".", "-") for t in df["Symbol"].tolist()]
 
 
-def run_variant(variant: str, session_date: str, bars: dict, chain_provider) -> None:
+def run_variant(variant: str, session_date: str, bars: dict, chain_provider,
+                allow_stale_from: str | None = None) -> bool:
+    """Step one variant. False (nothing written) when the ledger is stale."""
     state = state_mod.load_state(variant)
     if state["last_run_date"] == session_date:
         print(f"run_daily[{variant}]: already ran for {session_date} -- refusing to double-step.")
-        return
+        return True
+    if state_is_stale(state["last_run_date"], session_date):
+        # The engine steps ONE session and never backfills: stepping a ledger
+        # whose last run is older than the previous session would age every
+        # watch/position by one day and check stops against one bar for all
+        # the sessions in between. Refuse; the owner replays the gap with
+        # scripts/catch_up_ledger.py first. The override names the exact
+        # last_run_date it is for, so a leftover flag can never skip a
+        # session unnoticed.
+        if allow_stale_from != state["last_run_date"]:
+            print(f"run_daily[{variant}]: last_run_date {state['last_run_date']} is not the session before "
+                  f"{session_date} (expected {previous_session(session_date)}) -- ledger is stale, refusing to "
+                  f"step it, nothing written. Replay the gap with scripts/catch_up_ledger.py first; for a "
+                  f"one-session gap the calendar got wrong (unscheduled closure), "
+                  f"--allow-stale-from {state['last_run_date']}.")
+            return False
+        print(f"run_daily[{variant}]: --allow-stale-from {allow_stale_from}: stepping the ledger straight "
+              f"to {session_date}.")
     filler = make_filler(variant, VARIANTS[variant])
     result = step_one_day(state, session_date, bars, filler, chain_provider)
     for t in result["trades"]:
@@ -77,9 +104,10 @@ def run_variant(variant: str, session_date: str, bars: dict, chain_provider) -> 
     print(f"run_daily[{variant}]: {len(result['trades'])} exits today, "
           f"{result['n_open']} open, {result['n_pending']} pending, "
           f"equity ${result['equity']:,.2f}")
+    return True
 
 
-def main():
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true",
                     help="use cached local parquets + a synthetic chain instead of live Schwab data")
@@ -87,6 +115,10 @@ def main():
                     help="dry-run only: replay this date (YYYY-MM-DD) as 'today'")
     ap.add_argument("--variants", default=None,
                     help="comma-separated subset of stock,call,spread (default: all)")
+    ap.add_argument("--allow-stale-from", default=None, metavar="YYYY-MM-DD",
+                    help="step a stale ledger ONLY if its last_run_date equals this date: for a one-session "
+                         "gap the NYSE calendar refused wrongly (unscheduled market closure). A real gap is "
+                         "replayed with scripts/catch_up_ledger.py, after which this is a no-op anyway.")
     args = ap.parse_args()
     variants = args.variants.split(",") if args.variants else list(VARIANTS)
 
@@ -112,27 +144,29 @@ def main():
         latest = latest_session_date(client)
         if latest is None:
             print("run_daily: couldn't determine the latest session date (reference pull failed) -- skipping this tick.")
-            return
+            return 0
         session_date = latest.isoformat()
         if all(state_mod.load_state(v)["last_run_date"] == session_date for v in variants):
             print(f"run_daily: no new session yet (last session {session_date} already processed by every requested variant) -- skipping the full pull.")
-            return
+            return 0
         universe_bars = fetch_universe_bars(client, universe)
         bars = bars_for_today(universe_bars)
         chain_provider = make_chain_provider(client)
 
     print(f"run_daily: {session_date} -- {len(bars)}/{len(universe)} tickers with usable bars")
 
+    refused = False
     for variant in variants:
         cp = None if variant == "stock" else chain_provider
         try:
-            run_variant(variant, session_date, bars, cp)
+            refused |= not run_variant(variant, session_date, bars, cp, args.allow_stale_from)
         except Exception as e:
             # One variant's failure (e.g. a chain-provider outage) must
             # never take down the others -- same one-bad-thing doctrine as
             # fetch_universe_bars' per-ticker try/except.
             print(f"run_daily[{variant}]: FAILED, skipped this tick: {e}")
+    return 1 if refused else 0  # a stale refusal makes the tick log FAILED, not "ok"
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

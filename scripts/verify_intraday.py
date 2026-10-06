@@ -17,25 +17,35 @@ the poller must hold against engine.step_one_day():
   g. an intraday poll that already recorded events, followed by the EOD
      step on the same session, reaches the same end state (positions,
      pending, cash) as the EOD step alone would have from the settled
-     candle -- for the case where the events don't depend on order;
+     candle -- for the case where the events don't depend on order; and a
+     watch consumed intraday is not re-registered by the EOD step when
+     the same ticker gaps again that day (tagged, not deleted);
   h. the 2026-09-08 entry rule: a day whose whole range sits above
      gap_open is NOT a fill (the watch keeps resting); with one free slot
      and two watches touching, only the bigger gap had an order resting
      and fills, the smaller is consumed unfilled; a resting-less watch
      that does not touch keeps resting;
   i. quote freshness + ledger age: a quote not dated the session (or with
-     no trade time) is dropped, a ledger whose last EOD run is > 5 days
-     old is refused (never backfilled -- e.g. after a pause);
+     no trade time) is dropped, a ledger whose last EOD run is not the
+     previous NYSE session is refused (never backfilled -- one missed
+     evening run, or a pause);
   j. fetch_quotes against a fake Schwab client: parsing, bad rows left
      out, a failed chunk skipped, rejected symbols tolerated;
   k. run_intraday end to end on a temp state dir with a fake client:
-     fills and persists, --dry-run persists nothing, stale quote / stale
-     ledger / holiday are no-ops, missing reference quote or a raising
-     variant exit non-zero, EOD-closed variant untouched, heartbeat
-     written; the module never reaches an order endpoint;
+     fills and persists (ADV resolved from the daily endpoint; a failed
+     ADV lookup leaves the touch for the EOD run), --dry-run persists
+     nothing, stale quote / stale ledger / holiday are no-ops, missing
+     reference quote or a raising variant exit non-zero, EOD-closed
+     variant untouched, heartbeat written; the module never reaches an
+     order endpoint;
   l. scripts/gap_bot_tick.sh window gating (fake DOW/HM, stub python):
      09:35-16:00 ET intraday, 17:00-23:30 EOD, weekend/off-hours/
-     GAPBOT_INTRADAY=0 nothing, a failing run logs FAILED and exits 1.
+     GAPBOT_INTRADAY=0 nothing, a failing run logs FAILED and exits 1;
+  m. an ADV lookup failure intraday leaves the touched watch for the EOD
+     run (not filled, not consumed) instead of filling it unfloored.
+  The 2026-10-06 blockers also have pytest coverage:
+  scripts/test_intraday_blockers.py (staleness refusal in run_daily, tick
+  lock, --variants stock, idempotent appends).
 
 Part 3 (inside Part 2's run) -- the replay must actually trade: zero
 touch sessions means the bars did not load (see the Date-dtype note
@@ -73,7 +83,7 @@ from live.config import CAPITAL, HORIZON, MAX_SLOTS, VARIANTS
 from live.engine import step_one_day, SLIP
 from live.fillers import make_filler
 from live.intraday import (
-    check_watches, drop_stale_quotes, state_is_stale, fetch_quotes, ET, MAX_STATE_AGE_DAYS,
+    check_watches, drop_stale_quotes, state_is_stale, previous_session, fetch_quotes, ET,
 )
 
 FILLER = make_filler("stock", VARIANTS["stock"])
@@ -173,8 +183,12 @@ def scenario_e():
     s = fresh()
     register(s, "AAA", 95.0, 100.0, D0)
     r = check_watches(s, D1, {"AAA": bar(94, 96, 93, 95)}, FILLER, adv_lookup=lambda tk: 1.0)  # tiny ADV
-    ok = check(not r["filled"] and "AAA" not in s["pending"] and "AAA" not in s["open_positions"],
-               "ADV-refused touch: no position, watch consumed")
+    ok = check(not r["filled"] and "AAA" not in s["open_positions"] and s["pending"]["AAA"].get("consumed_on") == D1,
+               "ADV-refused touch: no position, watch consumed (tagged for the EOD step, not deleted)")
+    r = check_watches(s, D1, {"AAA": bar(94, 96, 93, 95)}, FILLER, adv_lookup=lambda tk: ADV_BIG)
+    ok &= check(not r["filled"], "a later poll never re-tries a consumed watch")
+    step_one_day(s, D1, {"AAA": bar(94, 96, 93, 95, prior_close=100)}, FILLER)
+    ok &= check("AAA" not in s["pending"] and not s["open_positions"], "EOD drops the consumed watch unfilled")
     s = fresh()
     register(s, "BBB", 95.0, 100.0, D0)
     step_one_day(s, D1, {"BBB": bar(94, 96, 93, 95, prior_close=100)}, FILLER)
@@ -232,6 +246,20 @@ def scenario_g():
     ok &= check(pos_strip(s_both["open_positions"]) == pos_strip(s_eod_only["open_positions"]), "same open positions")
     ok &= check(s_both["pending"] == s_eod_only["pending"], "same pending")
     ok &= check(abs(s_both["cash"] - s_eod_only["cash"]) < 1e-6, "same cash")
+    # 2026-10-06 divergence: a watch consumed intraday (here: ADV-refused)
+    # whose ticker ALSO gaps down again on the same settled candle. EOD
+    # alone leaves it pending at 2a (no re-registration) and drops it at
+    # 2c -> {}. Deleting it intraday let 2a register a fresh watch.
+    def consumed_case(intraday):
+        s = fresh()
+        register(s, "AAA", 95.0, 100.0, D0)
+        if intraday:
+            check_watches(s, D1, {"AAA": bar(94, 95.5, 93, 95.2)}, FILLER, adv_lookup=lambda tk: 1.0)
+        step_one_day(s, D1, {"AAA": bar(94, 95.5, 93, 95.2, prior_close=100, adv=1.0)}, FILLER)
+        return s
+    e, b = consumed_case(False), consumed_case(True)
+    ok &= check(e["pending"] == {} and b["pending"] == e["pending"] and b["open_positions"] == e["open_positions"],
+                "consumed watch + same-day re-gap on that ticker: pending == EOD alone (not re-registered)")
     return ok
 
 
@@ -255,8 +283,9 @@ def scenario_h():
     snap = {"BIG": bar(89, 91, 88, 90.5), "SMALL": bar(96, 98, 95, 97.5), "QUIET": bar(94, 95, 93, 94)}
     r = check_watches(s, D2, snap, FILLER, adv_lookup=lambda tk: ADV_BIG)
     ok &= check(r["filled"] == ["BIG"], "only the biggest-gap watch (the one with an order resting) fills")
-    ok &= check("SMALL" not in s["pending"] and "SMALL" not in s["open_positions"], "smaller gap touched without an order: consumed, unfilled")
-    ok &= check("QUIET" in s["pending"], "no touch: keeps resting")
+    ok &= check("SMALL" not in s["open_positions"] and s["pending"]["SMALL"].get("consumed_on") == D2,
+                "smaller gap touched without an order: consumed (tagged), unfilled")
+    ok &= check("QUIET" in s["pending"] and "consumed_on" not in s["pending"]["QUIET"], "no touch: keeps resting")
     return ok
 
 
@@ -281,9 +310,12 @@ class _Resp:
 
 class FakeClient:
     """Stands in for the schwab-py client. Records every call; has NO order
-    methods, so any attempt to place one raises AttributeError."""
-    def __init__(self, quotes=None, code=200, errors=None):
+    methods, so any attempt to place one raises AttributeError. `history`
+    names the tickers that get a 25-day daily candle series (so adv_for
+    resolves); any other ticker's history call fails with a 500."""
+    def __init__(self, quotes=None, code=200, errors=None, history=()):
         self.quotes, self.code, self.errors, self.calls = quotes or {}, code, errors, []
+        self.history = set(history)
 
     def get_quotes(self, tickers):
         self.calls.append(("get_quotes", list(tickers)))
@@ -292,9 +324,14 @@ class FakeClient:
             body["errors"] = self.errors
         return _Resp(self.code, body)
 
-    def get_price_history_every_day(self, *a, **k):
-        self.calls.append(("price_history", a))
-        return _Resp(500, {})
+    def get_price_history_every_day(self, tk, *a, **k):
+        self.calls.append(("price_history", (tk,)))
+        if tk not in self.history:
+            return _Resp(500, {})
+        day0 = _ms("2026-07-28 00:00")
+        candles = [{"datetime": day0 + i * 86_400_000, "open": 100.0, "high": 101.0, "low": 99.0,
+                    "close": 100.0, "volume": 1_000_000} for i in range(25)]
+        return _Resp(200, {"candles": candles})
 
 
 def scenario_i():
@@ -306,10 +343,13 @@ def scenario_i():
                                         "C": mk(None), "D": mk("2026-09-02 15:59")}, sess)
     ok = check(set(fresh) == {"A", "D"} and dropped == ["B", "C"], "prior-session / undated quotes dropped, today's kept")
     ok &= check(not state_is_stale(None, D1), "never-run ledger is not stale")
-    ok &= check(not state_is_stale("2026-08-28", "2026-09-01"), "Fri -> Tue (holiday weekend, 4d) not stale")
+    ok &= check(not state_is_stale(D0, D1) and not state_is_stale("2026-08-28", "2026-08-31"),
+                "previous session (Tue -> Wed, Fri -> Mon) not stale")
+    ok &= check(not state_is_stale("2026-09-04", "2026-09-08") and previous_session("2026-09-08") == "2026-09-04",
+                "Fri -> Tue over Labor Day (NYSE holiday) not stale")
+    ok &= check(state_is_stale("2026-08-31", "2026-09-02") and state_is_stale("2026-08-28", "2026-09-01"),
+                "one missed evening run (Mon -> Wed, Fri -> Tue) is stale")
     ok &= check(state_is_stale("2026-09-04", "2026-10-05"), "post-pause ledger (31d) is stale")
-    ok &= check(not state_is_stale("2026-09-01", "2026-09-06") and state_is_stale("2026-09-01", "2026-09-07"),
-                f"boundary: {MAX_STATE_AGE_DAYS}d ok, {MAX_STATE_AGE_DAYS + 1}d stale")
     return ok
 
 
@@ -388,7 +428,13 @@ def scenario_k():
     ok = True
     with tempfile.TemporaryDirectory() as tmp:
         _seed(tmp)
-        c = FakeClient({"SPY": spy, "AAA": touch})
+        rc, out = _run_poller(tmp, FakeClient({"SPY": spy, "AAA": touch}), T)  # no history -> no ADV
+        st = _load(tmp)
+        ok &= check(rc == 0 and "ADV unavailable" in out and "AAA" in st["pending"] and not st["open_positions"],
+                    "ADV lookup fails (history 500): touch left for the EOD run, no fill")
+    with tempfile.TemporaryDirectory() as tmp:
+        _seed(tmp)
+        c = FakeClient({"SPY": spy, "AAA": touch}, history=["AAA"])
         rc, out = _run_poller(tmp, c, T, extra_args=("--dry-run",))
         st = _load(tmp)
         ok &= check(rc == 0 and "DRY-RUN would record entry AAA" in out and "AAA" in st["pending"]
@@ -472,6 +518,23 @@ def scenario_l():
     return ok
 
 
+def scenario_m():
+    print("m. ADV lookup failure intraday fails closed (watch left for the EOD run)")
+    s = fresh()
+    register(s, "AAA", 95.0, 100.0, D0)
+    snap = {"AAA": bar(94, 95.5, 93, 95.2, adv=None)}  # a quote carries no adv; the lookup fails
+    r = check_watches(s, D1, dict(snap), FILLER, adv_lookup=lambda tk: None)
+    ok = check(not r["filled"] and "AAA" in s["pending"] and "consumed_on" not in s["pending"]["AAA"],
+               "no ADV: not filled, not consumed")
+    r = check_watches(s, D1, dict(snap), FILLER, adv_lookup=lambda tk: ADV_BIG)
+    ok &= check(r["filled"] == ["AAA"], "next poll with ADV fills it")
+    s = fresh()
+    register(s, "AAA", 95.0, 100.0, D0)
+    step_one_day(s, D1, {"AAA": bar(94, 95.5, 93, 95.2, prior_close=100, adv=None)}, FILLER)
+    ok &= check("AAA" in s["open_positions"], "EOD unchanged: adv None there is a newly-listed name, unfloored")
+    return ok
+
+
 def part2_contention() -> bool:
     print("\nPart 2: slot contention in the 2yr anchor replay (resting-limit touches vs free slots)")
     import pandas as pd
@@ -537,7 +600,7 @@ def part2_contention() -> bool:
 def main():
     print("Part 1: synthetic invariants")
     results = [f() for f in (scenario_a, scenario_b, scenario_c, scenario_d, scenario_e, scenario_f, scenario_g,
-                             scenario_h, scenario_i, scenario_j, scenario_k, scenario_l)]
+                             scenario_h, scenario_i, scenario_j, scenario_k, scenario_l, scenario_m)]
     results.append(part2_contention())
     print("\nALL PASS" if all(results) else "\nFAILURES above")
     return 0 if all(results) else 1

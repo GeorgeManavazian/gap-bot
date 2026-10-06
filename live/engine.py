@@ -256,10 +256,18 @@ def step_one_day(state: dict, today: str, bars: dict, filler, chain_provider=Non
     resting = resting_orders(live, pending, free)
     fill_candidates = []
     for tk in live:
+        w = pending[tk]
+        if w.get("consumed_on"):
+            # The intraday poller already consumed this watch today (touch
+            # without an order resting, or a refused fill). It stayed in
+            # `live` so the resting set above matches the daily view; it
+            # is never a candidate, and goes the way a consumed watch
+            # goes here. Never set by the backtest or the catch-up replay.
+            del pending[tk]
+            continue
         row = bars.get(tk)
         if row is None:
             continue
-        w = pending[tk]
         if not limit_touched(row, w["gap_open"]):
             continue
         if tk in resting:

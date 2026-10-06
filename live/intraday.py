@@ -65,7 +65,12 @@ from the daily endpoint only when a touch actually happens (rare).
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
+from pandas.tseries.holiday import (
+    AbstractHolidayCalendar, Holiday, GoodFriday, USLaborDay, USMartinLutherKingJr, USMemorialDay,
+    USPresidentsDay, USThanksgivingDay, nearest_workday, sunday_to_monday,
+)
 
 from live.config import HORIZON, MAX_SLOTS, stop_for_abs_gap, bucket_name_for
 from live.engine import close_position, fill_slots, limit_touched, resting_orders
@@ -151,34 +156,57 @@ def drop_stale_quotes(quotes: dict, session) -> tuple[dict, list[str]]:
     return fresh, sorted(dropped)
 
 
-# Longest normal gap between EOD runs is a holiday long weekend (4 calendar
-# days); anything past this means the evening run missed sessions (outage,
-# or the bot was paused), so counters and watch ages are stale.
-MAX_STATE_AGE_DAYS = 5
+# NYSE session calendar for the staleness rule below -- weekends plus the
+# nine exchange holidays, built from pandas' holiday rules so nothing here
+# needs a yearly edit. An unscheduled closure (e.g. a day of mourning) is
+# not in it and shows up as a refused run the owner clears with the
+# override; that is the safe direction.
+class _NYSECalendar(AbstractHolidayCalendar):
+    rules = [
+        Holiday("New Year's Day", month=1, day=1, observance=sunday_to_monday),  # Sat -> no Friday close
+        USMartinLutherKingJr, USPresidentsDay, GoodFriday, USMemorialDay,
+        Holiday("Juneteenth", month=6, day=19, start_date="2022-06-19", observance=nearest_workday),
+        Holiday("Independence Day", month=7, day=4, observance=nearest_workday),
+        USLaborDay, USThanksgivingDay,
+        Holiday("Christmas", month=12, day=25, observance=nearest_workday),
+    ]
 
 
-def state_is_stale(last_run_date: str | None, today: str, max_age_days: int = MAX_STATE_AGE_DAYS) -> bool:
-    """True when the ledger's last EOD run is more than `max_age_days` before
-    `today`. The EOD engine steps ONE day per run and never backfills, so
-    after a long gap the poller would fill limits and check stops against
-    watches/positions whose days_waited / days_held and ranges are weeks
-    old. The poller refuses; the evening run is unchanged. A ledger that
-    has never run (None) is not stale -- it has nothing to be stale about."""
+_NYSE = np.busdaycalendar(holidays=_NYSECalendar().holidays("2015-01-01", "2040-12-31").values.astype("datetime64[D]"))
+
+
+def previous_session(today: str) -> str:
+    """The NYSE session before `today` (YYYY-MM-DD), per the calendar above."""
+    return str(np.busday_offset(np.datetime64(today, "D"), -1, roll="forward", busdaycal=_NYSE))
+
+
+def state_is_stale(last_run_date: str | None, today: str) -> bool:
+    """True unless the ledger's last EOD run was the session right before
+    `today`. The EOD engine steps ONE session per run and never backfills,
+    so after even one missed evening run every days_waited / days_held is
+    off by one and the next step checks stops against one bar for two
+    sessions of price. Shared by run_daily (refuses to step; override is
+    --allow-stale-from <its last_run_date>, for a one-session calendar
+    false refusal; a real gap is replayed with catch_up_ledger.py) and the intraday poller
+    (refuses to act). A ledger that has never run (None) is not stale --
+    it has nothing to be stale about. `today` == last_run_date is handled
+    by the callers' own already-ran guard before this is asked."""
     if last_run_date is None:
         return False
-    return (pd.Timestamp(today) - pd.Timestamp(last_run_date)).days > max_age_days
+    return int(np.busday_count(np.datetime64(last_run_date, "D"), np.datetime64(today, "D"), busdaycal=_NYSE)) != 1
 
 
 def adv_for(client, tk: str):
     """Trailing 20-day average dollar volume for one ticker as of today,
     today's own (partial) volume excluded -- identical definition to the
     EOD path (schwab_data.bars_for_today), computed from the same daily
-    endpoint. None on any failure (unfloored, like a newly-listed name)."""
+    endpoint. None on any failure -- check_watches then leaves the touch
+    for the EOD run rather than filling it unfloored."""
     try:
         frames = fetch_universe_bars(client, [tk])
         return bars_for_today(frames).get(tk, {}).get("adv")
     except Exception as e:
-        print(f"adv_for({tk}): {e} -- treating as unfloored")
+        print(f"adv_for({tk}): {e} -- left for the EOD run")
         return None
 
 
@@ -200,7 +228,10 @@ def check_watches(state: dict, today: str, snap: dict, filler, chain_provider=No
         just as the backtest does;
       * counters are NOT advanced here; `days_held` on an intraday exit
         is reported as pos["days_held"] + 1, the value the EOD run would
-        have used for today.
+        have used for today;
+      * a consumed watch is tagged `consumed_on` = today, never deleted
+        (the EOD step drops it); a touch whose ADV can't be looked up is
+        neither filled nor consumed -- left for the EOD run.
     """
     cash = state["cash"]
     open_positions = state["open_positions"]
@@ -236,7 +267,14 @@ def check_watches(state: dict, today: str, snap: dict, filler, chain_provider=No
     # now; a resting-limit touch (running l <= gap_open <= running h) on
     # one of them is a candidate. A touch on any live watch, resting or
     # not, consumes it -- as does a fill refused later (ADV cap, cash,
-    # filler) -- identical to engine step 2b/2c/3.
+    # filler) -- identical to engine step 2b/2c/3. A consumed watch is NOT
+    # deleted here: it is tagged `consumed_on` and left for the EOD step to
+    # drop (engine 2c), because deleting it let that evening's step 2a
+    # re-register the same ticker off the same day's gap, which EOD alone
+    # never does (found 2026-10-06). Until then it still counts in `live`
+    # so the resting set stays what the start-of-day view decided, exactly
+    # as a consumed watch does inside step_one_day; it is never a
+    # candidate again.
     live = []
     for tk in list(pending):
         w = pending[tk]
@@ -248,30 +286,48 @@ def check_watches(state: dict, today: str, snap: dict, filler, chain_provider=No
             continue
         live.append(tk)
     resting = resting_orders(live, pending, MAX_SLOTS - len(open_positions))
-    candidates = []
+    candidates, consumed = [], []
     for tk in live:
+        w = pending[tk]
+        if w.get("consumed_on"):
+            continue  # consumed by an earlier poll today; EOD drops it
         row = snap.get(tk)
         if row is None:
             continue
-        w = pending[tk]
         if not limit_touched(row, w["gap_open"]):
             continue
         if tk in resting:
             abs_gap = -w["gap_pct"]
             candidates.append((tk, w["gap_open"], w["prior_close"], bucket_name_for(abs_gap),
                                stop_for_abs_gap(abs_gap), w["gap_pct"], w["gap_date"]))
-        del pending[tk]
+        consumed.append(tk)
 
     # 3) fill -- the engine's own helper, with today's ADV looked up only
     # for the (rare) touched names so the liquidity floor is applied
-    # exactly as at EOD.
-    if candidates and adv_lookup is not None:
-        for c in candidates:
-            snap[c[0]] = {**snap[c[0]], "adv": adv_lookup(c[0])}
+    # exactly as at EOD. No ADV (lookup failed, or none wired in) is NOT
+    # "unfloored" here, unlike a newly-listed name at EOD: the touch is
+    # left alone -- not filled, not consumed -- for the evening run, which
+    # computes ADV from the full pull (fail closed, 2026-10-06).
+    deferred = []
+    for c in list(candidates):
+        tk = c[0]
+        adv = adv_lookup(tk) if adv_lookup is not None else snap[tk].get("adv")
+        if adv is None:
+            print(f"check_watches: {tk} touched but ADV unavailable -- left for the EOD run, not filled")
+            candidates.remove(c)
+            deferred.append(tk)
+            continue
+        snap[tk] = {**snap[tk], "adv": adv}
+    consumed = [tk for tk in consumed if tk not in deferred]
     before = set(open_positions)
     cash = fill_slots(candidates, cash, open_positions, today, snap, filler, chain_provider,
                       extra_fields=extra)
     filled = [tk for tk in open_positions if tk not in before]
+    for tk in consumed:
+        if tk in open_positions:
+            del pending[tk]  # filled: gone from pending, as at EOD
+        else:
+            pending[tk]["consumed_on"] = today  # missed wick or refused fill
 
     # 4) mark at the poll's last price -- same field the dashboard reads.
     mtm = 0.0

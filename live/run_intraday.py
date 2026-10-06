@@ -18,9 +18,10 @@ Guards, in order, each a logged no-op rather than a guess:
   * a variant whose last_run_date == today has already been closed out by
     the EOD run for this session -> skipped (the poller must never act
     after the day-step has advanced the counters for the same date);
-  * a variant whose last_run_date is more than MAX_STATE_AGE_DAYS old (the
-    evening run missed sessions, or the bot was paused) -> refused: its
-    counters and watch ages are stale and the EOD engine never backfills;
+  * a variant whose last_run_date is not the previous NYSE session (an
+    evening run was missed, or the bot was paused) -> refused: its counters
+    and watch ages are stale and the EOD engine never backfills (same rule
+    as run_daily's own refusal, live/intraday.py state_is_stale);
   * a watched ticker whose quote isn't dated today (no regular print yet,
     halted, stale feed) -> left out of the poll like an absent bar.
 
@@ -38,7 +39,6 @@ Run from code/gap-bot/ (paths.py resolves data/live/ relative to cwd).
 """
 from __future__ import annotations
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -50,7 +50,7 @@ from live.config import VARIANTS
 from live.fillers import make_filler
 from live.intraday import (
     watched_tickers, fetch_quotes, session_date_from_quotes, adv_for, check_watches, now_et,
-    drop_stale_quotes, state_is_stale, MAX_STATE_AGE_DAYS,
+    drop_stale_quotes, state_is_stale, previous_session,
 )
 from live.paths import account_paths
 
@@ -65,11 +65,7 @@ def write_heartbeat(variant: str, payload: dict) -> None:
     synced to the mirror with the rest of the account dir."""
     p = account_paths(variant)
     os.makedirs(p["dir"], exist_ok=True)
-    path = os.path.join(p["dir"], "intraday.json")
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(payload, f, indent=2, default=str)
-    os.replace(tmp, path)
+    state_mod.write_atomic(os.path.join(p["dir"], "intraday.json"), payload)
 
 
 def watch_table(state: dict, snap: dict) -> dict:
@@ -81,6 +77,7 @@ def watch_table(state: dict, snap: dict) -> dict:
     for tk, w in state["pending"].items():
         row = snap.get(tk, {})
         out[tk] = {"kind": "pending", "gap_open": round(w["gap_open"], 4), "gap_date": w["gap_date"],
+                   "consumed_on": w.get("consumed_on"),
                    "h": row.get("h"), "l": row.get("l"), "last": row.get("c")}
     return out
 
@@ -92,9 +89,9 @@ def run_variant(variant: str, today: str, snap: dict, client, chain_provider, st
         print(f"run_intraday[{variant}]: EOD run already closed out {today} -- no-op.")
         return
     if state_is_stale(state["last_run_date"], today):
-        print(f"run_intraday[{variant}]: last EOD run was {state['last_run_date']}, more than "
-              f"{MAX_STATE_AGE_DAYS} days before {today} -- ledger is stale (missed sessions or "
-              f"paused), refusing to act intraday. The evening run steps it; catch-up is the owner's call.")
+        print(f"run_intraday[{variant}]: last EOD run was {state['last_run_date']}, not the previous "
+              f"session ({previous_session(today)}) -- ledger is stale (missed evening run or paused), "
+              f"refusing to act intraday. The evening run refuses too; catch-up is the owner's call.")
         return
     if not watched_tickers(state):
         print(f"run_intraday[{variant}]: nothing watched -- no-op.")

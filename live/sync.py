@@ -92,7 +92,9 @@ def sync_state(state_dir: str, mirror_clone_dir: str) -> bool:
     # would also delete the .git directory just created above (it isn't
     # part of state_dir) -- found 2026-09-07 running this for real the
     # first time, with a credential in place. --exclude=.git protects it.
-    r = _run(["rsync", "-a", "--delete", "--exclude=.git", "--exclude=logs/",
+    # *.tmp.* are the atomic writers' per-pid scratch files (state.py): a
+    # tick killed mid-write leaves one behind; never push a torn file.
+    r = _run(["rsync", "-a", "--delete", "--exclude=.git", "--exclude=logs/", "--exclude=*.tmp.*",
               state_dir + "/", mirror_clone_dir + "/"], None)
     if r.returncode != 0:
         print(f"sync_state: rsync failed: {r.stderr}")
