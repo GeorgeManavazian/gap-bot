@@ -1,0 +1,9 @@
+window,universe,dropped,arm,closed_trades,return_pct,maxdd_pct,ret_over_maxdd,E_minus_D_ret,E_minus_D_retdd
+10yr,full,,D,381,201.87,-25.41,7.95,58.86,4.04
+10yr,full,,E,370,260.73,-21.75,11.99,58.86,4.04
+10yr,-SMCI,SMCI,D,380,154.96,-25.41,6.1,59.64,3.77
+10yr,-SMCI,SMCI,E,370,214.6,-21.75,9.87,59.64,3.77
+10yr,-top3,"SMCI,TTD,COHR",D,382,147.97,-25.41,5.82,63.49,3.9
+10yr,-top3,"SMCI,TTD,COHR",E,371,211.46,-21.75,9.72,63.49,3.9
+10yr,-top5,"SMCI,TTD,COHR,ROST,ALGN",D,381,138.55,-25.41,5.45,63.39,3.84
+10yr,-top5,"SMCI,TTD,COHR,ROST,ALGN",E,371,201.94,-21.75,9.29,63.39,3.84

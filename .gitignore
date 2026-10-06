@@ -22,3 +22,6 @@ data/live/
 # Local-only work
 live/dashboard_design/
 charts/
+
+# Licensed option-chain dumps (ThetaData) stay local
+*.pkl

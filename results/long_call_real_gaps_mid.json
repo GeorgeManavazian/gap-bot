@@ -1,0 +1,86 @@
+{
+  "anchor_trades": 508,
+  "tickers_missing_from_store": [
+    "AMCR",
+    "BF-B",
+    "ECHO",
+    "FERG",
+    "FISV",
+    "FLEX",
+    "MOS",
+    "MSI",
+    "PSKY",
+    "Q",
+    "RDDT",
+    "SNDK",
+    "TTD",
+    "VEEV",
+    "VRT",
+    "WRB",
+    "WSM"
+  ],
+  "trades_on_missing_tickers": 42,
+  "trades_entering_after_store_end": 22,
+  "trades_truncated_at_store_end": 14,
+  "call_14d_0.3_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_14d_0.5_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_14d_0.7_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_21d_0.3_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_21d_0.5_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_21d_0.7_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_30d_0.3_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_30d_0.5_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_30d_0.7_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_45d_0.3_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_45d_0.5_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_45d_0.7_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_60d_0.3_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_60d_0.5_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "call_60d_0.7_gaps": {
+    "no_entry_snapshot": 4,
+    "exit_day_missing_snapshot": 3
+  },
+  "scored_subset": 446
+}

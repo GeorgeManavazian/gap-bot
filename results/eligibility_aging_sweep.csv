@@ -1,0 +1,15 @@
+variant,n_trades,win_pct,return_pct,maxdd_pct
+"baseline A: rest_top_n, wait_horizon=63",123,65.0,20.8,-16.72
+"baseline B: rest_top_n, wait_horizon=uncapped",99,59.6,11.62,-16.68
+"decay halflife=10d, wait_horizon=capped-63",134,64.9,23.69,-18.04
+"decay halflife=10d, wait_horizon=uncapped",135,64.4,18.58,-19.83
+"decay halflife=20d, wait_horizon=capped-63",136,65.4,24.44,-18.76
+"decay halflife=20d, wait_horizon=uncapped",133,63.9,17.67,-20.73
+"decay halflife=30d, wait_horizon=capped-63",132,65.2,24.08,-19.27
+"decay halflife=30d, wait_horizon=uncapped",128,64.1,16.83,-20.43
+"agecap=15d, wait_horizon=capped-63",128,68.8,26.52,-21.25
+"agecap=15d, wait_horizon=uncapped",122,67.2,21.46,-22.01
+"agecap=30d, wait_horizon=capped-63",130,66.9,25.77,-18.83
+"agecap=30d, wait_horizon=uncapped",125,64.8,17.5,-21.24
+"agecap=45d, wait_horizon=capped-63",127,66.1,23.53,-18.56
+"agecap=45d, wait_horizon=uncapped",122,63.1,13.2,-20.56

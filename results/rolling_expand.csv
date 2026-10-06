@@ -1,0 +1,6 @@
+variant,10yr_ret,10yr_maxdd,median_2yr_ret,median_2yr_dd,median_ratio,worst_2yr_ret,worst_2yr_dd,beats_live_ratio_%,beats_BEST_ratio_%
+"live (20 slots, bucket stops)",177.8,-26.0,21.1,-12.0,1.63,3.5,-26.0,0,43
+"BEST: 10 slots, 50% stop, 63d exit",262.6,-21.7,24.2,-14.9,1.58,4.7,-21.7,57,0
+"expand@30, never exit",331.9,-31.8,32.9,-24.8,1.27,-1.7,-31.8,48,29
+"expand@30, forced exit at 6 months",301.0,-26.2,28.9,-22.6,1.35,5.8,-26.2,49,38
+"expand@30, forced exit at 1 year",284.4,-27.9,27.6,-22.5,1.27,0.5,-27.9,50,33

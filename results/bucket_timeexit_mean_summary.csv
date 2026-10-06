@@ -1,0 +1,6 @@
+bucket,range,condition,hold_horizon,n_trades,win_pct,return_pct,maxdd_pct,tp_gap_filled,stop,time_exit,avg_days_held
+1pct,"[1,2)",test_mean_10,10,2530,72.9,-29.89,-32.99,1808,451,271,3.6
+2pct,"[2,3)",test_mean_16,16,1970,74.7,6.6,-17.77,1435,244,291,6.0
+3pct,"[3,4)",test_mean_23,23,1531,74.7,11.13,-22.65,1096,152,283,9.4
+4pct,"[4,5)",test_mean_33,33,1166,73.3,21.02,-24.6,821,149,196,12.8
+5pct,"[5,6)",test_mean_43,43,802,74.1,32.87,-31.53,565,55,182,18.5

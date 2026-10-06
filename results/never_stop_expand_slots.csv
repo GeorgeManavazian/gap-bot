@@ -1,0 +1,8 @@
+arm,closed_trades,win_pct_closed,return_pct,maxdd_pct,ret_over_maxdd,open_at_end,open_underwater,worst_open_pct,unrealized_usd,max_open,max_stuck,avg_pct_invested,max_pct_invested,median_hold_closed,max_hold_closed
+"D anchor-10 (stops, 63d)",76,63.2,25.16,-11.09,2.27,5,3,-19.0,-3508,9,7,65.4,91.4,56.0,63
+"E 10 nostop, 63d exit",74,63.5,32.15,-12.48,2.58,5,3,-19.0,-3704,10,7,65.3,93.9,58.5,63
+"C 10 nostop, never exit, no expand",19,100.0,12.87,-16.01,0.8,7,6,-53.7,-15445,10,10,73.6,93.9,43.0,450
+"A expand@30, size 1/10",35,100.0,18.35,-22.15,0.83,12,9,-53.7,-17976,12,12,88.6,99.5,33.0,450
+"B expand@30, size 1/(10+stuck)",56,100.0,15.84,-21.74,0.73,23,17,-53.7,-19329,26,23,91.3,99.9,41.5,450
+"A20 expand@20, size 1/10",35,100.0,8.31,-21.46,0.39,13,12,-53.7,-27771,13,12,90.0,99.8,32.0,450
+"A45 expand@45, size 1/10",32,100.0,15.52,-21.7,0.72,13,10,-53.7,-21703,13,12,88.5,99.7,24.0,450

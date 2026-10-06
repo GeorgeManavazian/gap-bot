@@ -1,0 +1,7 @@
+cand,train_return_pct,train_maxdd_pct,train_ret_over_maxdd,train_closed_trades,train_win_pct,oos_return_pct,oos_maxdd_pct,oos_ret_over_maxdd,oos_closed_trades,oos_win_pct,qualifies,yrs_ge_base_7,yrs_ge_base_oos4
+depth_baseline,76.27,-25.96,2.94,549,72.7,44.47,-25.96,1.71,377,73.2,,,
+A_crowd_throttle,81.29,-20.61,3.95,545,73.4,48.59,-20.61,2.36,373,74.3,True,7.0,4.0
+B_bucket_then_quality,82.19,-24.27,3.39,553,73.8,41.7,-24.27,1.72,362,73.8,True,4.0,2.0
+C_rank_composite,59.08,-16.19,3.65,550,72.9,29.4,-16.19,1.82,359,73.0,False,2.0,1.0
+D_ridge_walkforward,16.71,-29.22,0.57,1030,78.3,-4.34,-29.22,-0.15,858,79.6,False,3.0,0.0
+E_A_crowd_throttle+sector_cap4,86.76,-18.04,4.81,556,75.2,45.46,-18.04,2.52,371,74.9,True,4.0,2.0

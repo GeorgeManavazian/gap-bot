@@ -1,0 +1,13 @@
+policy,n_trades,win_pct,return_pct,maxdd_pct,touches,touch_low_above,touch_open_above,fill_low_above,fill_open_above
+"gap_desc (anchor, sees whole day)",508,81.1,72.34,-18.33,5065,1823,3066,159,276
+gap_desc + entry at open when open > gap_open (price fix only),511,72.2,13.34,-23.13,5067,1820,3068,0,0
+"gap_desc + resting limit semantics (fill only if l <= gap_open <= h, else keep resting)",427,73.5,9.38,-21.08,3737,0,1899,0,214
+"rest_top_n (orders on the `free` biggest gaps, real-time feasible)",252,75.4,52.52,-17.29,268,91,145,91,145
+"rest_top_n + STOP-order fill (entry = max(gap_open, open) on h >= gap_open)",256,67.2,14.84,-18.1,272,94,148,0,0
+"rest_top_n + STOP-order fill, cancelled when the open is already >= tp",242,71.1,15.88,-18.08,272,94,149,0,0
+rest_top_n + resting limit semantics (ANCHOR since 2026-09-08),174,64.4,11.45,-14.59,185,0,92,0,92
+"first_touch (random order, seed 0)",924,84.5,54.14,-18.99,5095,1833,3094,286,499
+"first_touch (random order, seed 1)",870,83.7,49.51,-21.21,5137,1850,3119,278,477
+"first_touch (random order, seed 2)",847,82.6,38.05,-16.31,5109,1825,3097,256,452
+"first_touch (random order, seed 3)",848,84.4,40.23,-22.13,5091,1817,3086,259,449
+"first_touch (random order, seed 4)",885,83.1,32.19,-18.6,5092,1840,3092,265,480
