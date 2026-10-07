@@ -34,7 +34,10 @@ price a candidate skips that candidate for that variant only (fillers.py
 doctrine); it never stops the stock variant or crashes the tick.
 
 Live:     .venv-live/bin/python live/run_daily.py
-Dry run:  .venv-live/bin/python live/run_daily.py --dry-run --as-of 2026-08-18
+Smoke test on the VPS (real Schwab data, persists NOTHING):
+          .venv-live/bin/python live/run_daily.py --dry-run --variants stock
+Dev box (synthetic bars, no Schwab; add --dry-run to keep the ledger untouched):
+          .venv-live/bin/python live/run_daily.py --fixture-data --as-of 2026-08-18
           (replays a historical date from the cached parquets instead of
           calling Schwab, and prices call/spread off a synthetic
           Black-Scholes chain instead of a live one -- for exercising the
@@ -68,8 +71,11 @@ def load_universe() -> list[str]:
 
 
 def run_variant(variant: str, session_date: str, bars: dict, chain_provider,
-                allow_stale_from: str | None = None) -> bool:
-    """Step one variant. False (nothing written) when the ledger is stale."""
+                allow_stale_from: str | None = None, persist: bool = True) -> bool:
+    """Step one variant. False (nothing written) when the ledger is stale.
+    persist=False (--dry-run) runs the full step and prints what it would
+    book, but writes no trade, snapshot or state -- the ledger on disk is
+    byte-identical afterwards."""
     state = state_mod.load_state(variant)
     if state["last_run_date"] == session_date:
         print(f"run_daily[{variant}]: already ran for {session_date} -- refusing to double-step.")
@@ -93,6 +99,13 @@ def run_variant(variant: str, session_date: str, bars: dict, chain_provider,
               f"to {session_date}.")
     filler = make_filler(variant, VARIANTS[variant])
     result = step_one_day(state, session_date, bars, filler, chain_provider)
+    tag = "DRY-RUN would book" if not persist else "booked"
+    print(f"run_daily[{variant}]: {tag} {len(result['trades'])} exits today, "
+          f"{result['n_open']} open, {result['n_pending']} pending, "
+          f"equity ${result['equity']:,.2f}")
+    if not persist:
+        print(f"run_daily[{variant}]: DRY-RUN -- nothing written (no trade, snapshot or state).")
+        return True
     for t in result["trades"]:
         state_mod.append_trade(t, variant)
     state_mod.append_snapshot({
@@ -101,18 +114,20 @@ def run_variant(variant: str, session_date: str, bars: dict, chain_provider,
         "n_pending": result["n_pending"],
     }, variant)
     state_mod.save_state(result["state"], variant)
-    print(f"run_daily[{variant}]: {len(result['trades'])} exits today, "
-          f"{result['n_open']} open, {result['n_pending']} pending, "
-          f"equity ${result['equity']:,.2f}")
     return True
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true",
-                    help="use cached local parquets + a synthetic chain instead of live Schwab data")
+                    help="run the full step (real Schwab data unless --fixture-data) but persist NOTHING: "
+                         "no trade, snapshot or state. The production smoke test.")
+    ap.add_argument("--fixture-data", action="store_true",
+                    help="synthetic bars + synthetic chain instead of live Schwab data (dev box, tests). "
+                         "Persists unless --dry-run is also given.")
     ap.add_argument("--as-of", default=None,
-                    help="dry-run only: replay this date (YYYY-MM-DD) as 'today'")
+                    help="--fixture-data only: replay this date (YYYY-MM-DD) as 'today' "
+                         "(default: today in ET)")
     ap.add_argument("--variants", default=None,
                     help="comma-separated subset of stock,call,spread (default: all)")
     ap.add_argument("--allow-stale-from", default=None, metavar="YYYY-MM-DD",
@@ -127,10 +142,12 @@ def main() -> int:
 
     universe = load_universe()
 
-    if args.dry_run:
+    if args.fixture_data:
         from live import fixture_data
         from live.fixture_options import make_fixture_chain_provider
-        as_of = args.as_of or pd.Timestamp.now().normalize().isoformat()[:10]
+        # ET, not the VPS's UTC wall clock: after 20:00 ET pd.Timestamp.now()
+        # is already tomorrow's date there
+        as_of = args.as_of or pd.Timestamp.now(tz="America/New_York").normalize().date().isoformat()
         session_date = pd.Timestamp(as_of).normalize().date().isoformat()
         universe_bars = fixture_data.fetch_universe_bars(universe, as_of)
         bars = bars_for_today(universe_bars)
@@ -152,6 +169,8 @@ def main() -> int:
         if all(state_mod.load_state(v)["last_run_date"] == session_date for v in variants):
             print(f"run_daily: no new session yet (last session {session_date} already processed by every requested variant) -- skipping the full pull.")
             return 0
+        if args.dry_run:
+            print("run_daily: DRY-RUN -- real data, nothing will be persisted.")
         universe_bars = fetch_universe_bars(client, universe)
         bars = bars_for_today(universe_bars)
         chain_provider = make_chain_provider(client)
@@ -162,7 +181,8 @@ def main() -> int:
     for variant in variants:
         cp = None if variant == "stock" else chain_provider
         try:
-            refused |= not run_variant(variant, session_date, bars, cp, args.allow_stale_from)
+            refused |= not run_variant(variant, session_date, bars, cp, args.allow_stale_from,
+                                       persist=not args.dry_run)
         except Exception as e:
             # One variant's failure (e.g. a chain-provider outage) must
             # never take down the others -- same one-bad-thing doctrine as

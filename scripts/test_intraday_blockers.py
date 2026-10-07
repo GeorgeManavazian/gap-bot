@@ -129,11 +129,41 @@ def test_run_daily_main_exits_nonzero_on_stale(state_dir, monkeypatch):
     _seed_daily(state_dir, "2026-08-14")
     monkeypatch.setattr(rd, "load_universe", lambda: ["AAA"])
     monkeypatch.setattr(fd, "fetch_universe_bars", lambda universe, as_of: {})
-    monkeypatch.setattr(sys, "argv", ["run_daily.py", "--dry-run", "--as-of", "2026-09-02", "--variants", "stock"])
+    monkeypatch.setattr(sys, "argv", ["run_daily.py", "--fixture-data", "--as-of", "2026-09-02", "--variants", "stock"])
     assert rd.main() == 1
     assert vi._load(state_dir)["last_run_date"] == "2026-08-14"
-    monkeypatch.setattr(sys, "argv", ["run_daily.py", "--dry-run", "--as-of", "2026-09-02", "--variants", "stock",
+    monkeypatch.setattr(sys, "argv", ["run_daily.py", "--fixture-data", "--as-of", "2026-09-02", "--variants", "stock",
                                       "--allow-stale-from", "2026-08-14"])
+    assert rd.main() == 0
+    assert vi._load(state_dir)["last_run_date"] == "2026-09-02"
+
+
+def test_run_daily_dry_run_persists_nothing(state_dir, monkeypatch, capsys):
+    """--dry-run runs the whole step and reports it, but the ledger on disk is
+    byte-identical afterwards -- found the hard way on 2026-10-06, when the
+    old --dry-run (fixture data, still persisting) wrote 16 synthetic watches
+    and a next-day last_run_date into the fresh production ledger."""
+    import live.run_daily as rd
+    import live.fixture_data as fd
+    before = _seed_daily(state_dir, "2026-09-01")
+    bars = {"AAA": vi.bar(94, 95.5, 93, 95.2, prior_close=100)}  # fills AAA if persisted
+    assert rd.run_variant("stock", "2026-09-02", bars, None, persist=False) is True
+    out = capsys.readouterr().out
+    assert "DRY-RUN" in out and "nothing written" in out
+    assert open(os.path.join(state_dir, "account", "state.json")).read() == before
+    assert not os.path.exists(os.path.join(state_dir, "account", "trades.jsonl"))
+    assert not os.path.exists(os.path.join(state_dir, "account", "snapshots.jsonl"))
+    # through main(), on a ledger that does not exist yet: still nothing created
+    import shutil
+    shutil.rmtree(os.path.join(state_dir, "account"))
+    monkeypatch.setattr(rd, "load_universe", lambda: ["AAA"])
+    monkeypatch.setattr(fd, "fetch_universe_bars", lambda universe, as_of: {})
+    monkeypatch.setattr(sys, "argv", ["run_daily.py", "--dry-run", "--fixture-data", "--as-of", "2026-09-02",
+                                      "--variants", "stock"])
+    assert rd.main() == 0
+    assert not os.path.exists(os.path.join(state_dir, "account"))
+    # and the same flags without --dry-run DO persist (the old behaviour, now opt-in)
+    monkeypatch.setattr(sys, "argv", ["run_daily.py", "--fixture-data", "--as-of", "2026-09-02", "--variants", "stock"])
     assert rd.main() == 0
     assert vi._load(state_dir)["last_run_date"] == "2026-09-02"
 
@@ -507,7 +537,7 @@ def test_every_entry_point_prints_the_profile_banner_first(tmp_path, profile):
     r = run([PY, "live/run_intraday.py", "--variants", "stock"])
     assert r.returncode == 0 and r.stdout.splitlines()[0] == banner and "nothing watched" in r.stdout, r.stdout + r.stderr
     # run_daily: dry run with universe + bars stubbed (no parquet scan), fresh ledger steps an empty day
-    code = ("import sys; sys.argv = ['run_daily.py', '--dry-run', '--as-of', '2026-09-02', '--variants', 'stock']; "
+    code = ("import sys; sys.argv = ['run_daily.py', '--fixture-data', '--as-of', '2026-09-02', '--variants', 'stock']; "
             "import live.run_daily as rd, live.fixture_data as fd; rd.load_universe = lambda: ['AAA']; "
             "fd.fetch_universe_bars = lambda u, a: {}; sys.exit(rd.main())")
     r = run([PY, "-c", code])
