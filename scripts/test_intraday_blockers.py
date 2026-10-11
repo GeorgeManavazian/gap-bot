@@ -622,3 +622,65 @@ def test_sync_failed_push_does_not_mark_head_as_pushed(state_dir, monkeypatch):
     monkeypatch.setattr(sync, "_run", _sync_stub(cmds, head="abc", pushed=None, diff_rc=1, push_rc=1))
     assert sync.sync_state(state_dir, os.path.join(state_dir, "mirror")) is False
     assert ["git", "update-ref", "refs/pushed/main", "HEAD"] not in cmds, cmds
+
+
+# ------------------------------------------------ 9. live feed (2026-10-11)
+
+def _argfile_stub(tmp_path, argfile, fail_livefeed=False):
+    body = f'echo "$@" >> "{argfile}"\n'
+    if fail_livefeed:
+        body += 'case "$*" in *live.livefeed*) echo "push_live: push failed: boom"; exit 1;; esac\n'
+    return _stub(tmp_path, "py_lf" + ("_fail" if fail_livefeed else ""), body)
+
+
+def test_tick_pushes_live_feed_on_quiet_polls_and_eod(tmp_path):
+    repo, env = tmp_path / "repo", {"PATH": _flock_on_path(tmp_path)}
+    argfile = tmp_path / "args"
+    py = _argfile_stub(tmp_path, argfile)
+    for hm in (1000, 1001, 1800):
+        rc, log = _tick(repo, 2, hm, py=py, extra=env)
+        assert rc == 0
+    pushes = [ln for ln in argfile.read_text().splitlines() if ln.endswith("-m live.livefeed --push")]
+    assert len(pushes) == 3                              # first poll, quiet poll, EOD
+    assert "livefeed" not in log                         # success is silent
+
+
+def test_tick_livefeed_failure_logs_once_per_session(tmp_path):
+    repo, env = tmp_path / "repo", {"PATH": _flock_on_path(tmp_path)}
+    argfile = tmp_path / "args"
+    bad = _argfile_stub(tmp_path, argfile, fail_livefeed=True)
+    good = _argfile_stub(tmp_path, argfile)
+    rc, log1 = _tick(repo, 2, 1000, py=bad, extra=env)
+    assert rc == 0                                       # a dead feed never fails the tick
+    assert log1.count("livefeed push FAILED") == 1 and "push_live: push failed: boom" in log1
+    rc, log2 = _tick(repo, 2, 1001, py=bad, extra=env)
+    assert rc == 0 and log2 == log1                      # silent on the second failure
+    rc, log3 = _tick(repo, 2, 1002, py=good, extra=env)
+    assert rc == 0 and log3 == log1                      # recovery: marker cleared, nothing logged
+    rc, log4 = _tick(repo, 2, 1003, py=bad, extra=env)
+    assert rc == 0 and log4.count("livefeed push FAILED") == 2   # re-armed after a success
+
+
+def test_tick_livefeed_runs_under_a_timeout_when_available(tmp_path):
+    repo = tmp_path / "repo"
+    argfile = tmp_path / "args"
+    _stub(tmp_path, "timeout", f'echo "timeout $1" >> "{argfile}"; shift; exec "$@"\n')
+    env = {"PATH": f"{tmp_path}:{_flock_on_path(tmp_path)}"}
+    rc, _ = _tick(repo, 2, 1000, py=_argfile_stub(tmp_path, argfile), extra=env)
+    assert rc == 0
+    lines = argfile.read_text().splitlines()
+    assert "timeout 25" in lines                          # GAPBOT_LIVE_TIMEOUT default
+
+
+def test_heartbeat_carries_slot_limit(state_dir):
+    import live.run_intraday as ri
+    from live.engine import slot_limit
+    s = vi.fresh()
+    s["pending"] = {"TCH": {"gap_open": 95.0, "prior_close": 100.0, "gap_pct": -5.0,
+                            "gap_date": "2026-09-01", "days_waited": 1}}
+    s["last_run_date"] = "2026-09-01"
+    state_mod.save_state(s, "stock")
+    snap = {"TCH": {"o": 94, "h": 94.5, "l": 93, "c": 94.2}, "SPY": {"o": 500, "h": 501, "l": 499, "c": 500}}
+    ri.run_variant("stock", "2026-09-02", snap, vi.FakeClient(), None, POLL_AT, dry_run=False)
+    hb = json.load(open(os.path.join(state_mod.account_paths("stock")["dir"], "intraday.json")))
+    assert hb["slot_limit"] == slot_limit(s["open_positions"], s["pending"])

@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from live import state as state_mod
 from live.config import PROFILE, PROFILE_BANNER, VARIANTS
+from live.engine import slot_limit
 from live.fillers import make_filler
 from live.intraday import (
     watched_tickers, fetch_quotes, session_date_from_quotes, adv_for, check_watches, now_et,
@@ -116,6 +117,7 @@ def run_variant(variant: str, today: str, snap: dict, client, chain_provider, st
     state_mod.save_state(state, variant)
     write_heartbeat(variant, {
         "polled_at": stamp, "session": today, "profile": PROFILE, "equity": round(result["equity"], 2),
+        "slot_limit": slot_limit(state["open_positions"], state["pending"]),
         "exits": [t["ticker"] for t in result["trades"]], "entries": result["filled"],
         "watched": watch_table(state, snap),
     })

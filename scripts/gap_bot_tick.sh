@@ -30,6 +30,8 @@
 # day bury the real events. Logged: the session's first successful poll
 # (so the log proves the poller is alive), any poll that recorded an
 # event, a FAILED poll, a skipped (lock held) poll. EOD logs as before.
+# Every successful poll and EOD run then pushes live.json for the dashboard
+# (live/livefeed.py, 2026-10-11); only its first failure of a session is logged.
 #
 # Reuses the wheel bot's Python venv (PY below) -- same schwab-py, pandas,
 # numpy already installed there; gap-bot has no venv of its own on the VPS.
@@ -121,18 +123,42 @@ EVENT=0
 if [ "$MODE" = intraday ] && grep -q 'recorded \(exit\|entry\)' "$OUT"; then
     EVENT=1
 fi
-if [ "$MODE" = intraday ] && [ "$EVENT" = 0 ] && [ "$FIRST" = 0 ]; then
-    rm -f "$OUT"
-    exit 0  # quiet no-op poll: nothing recorded, nothing logged
+# Quiet no-op poll after the session's first: nothing logged. Everything
+# else (EOD, an event, the first poll) logs its output and "tick ok".
+if [ "$MODE" = eod ] || [ "$EVENT" = 1 ] || [ "$FIRST" = 1 ]; then
+    cat "$OUT" >> "$LOGDIR/tick.log"
+    log "tick ok ($MODE)"
+    [ "$FIRST" = 1 ] && ET +%F > "$SESSION_MARK"
 fi
-cat "$OUT" >> "$LOGDIR/tick.log"
 rm -f "$OUT"
-log "tick ok ($MODE)"
-[ "$FIRST" = 1 ] && ET +%F > "$SESSION_MARK"
 
-# An intraday poll that recorded nothing changed nothing worth mirroring
-# (only its heartbeat file) -- skip the sync so the public state repo
-# doesn't collect ~390 no-op commits a day. The EOD run always syncs.
+# Live feed (2026-10-11): after EVERY successful poll, quiet or not, and
+# after the EOD run, republish live.json to the state repo's `live` branch
+# (one amended commit, so the repo never grows) for the GitHub Pages
+# dashboard. Best-effort and capped: a hung push must not hold the lock
+# into the next minute. Failure is logged once per session -- a dead token
+# is one line a day, not 390 -- and re-armed by the next success.
+LIVE_FAIL_MARK="$LOGDIR/.livefeed_fail_session"
+LIVE_OUT="$(mktemp)"
+LIVE_CMD=(env PYTHONPATH="$REPO" "$PY" -m live.livefeed --push)
+if command -v timeout >/dev/null 2>&1; then
+    LIVE_CMD=(timeout "${GAPBOT_LIVE_TIMEOUT:-25}" "${LIVE_CMD[@]}")
+fi
+if "${LIVE_CMD[@]}" > "$LIVE_OUT" 2>&1; then
+    rm -f "$LIVE_FAIL_MARK"
+else
+    if [ "$(cat "$LIVE_FAIL_MARK" 2>/dev/null)" != "$(ET +%F)" ]; then
+        cat "$LIVE_OUT" >> "$LOGDIR/tick.log"
+        log "livefeed push FAILED (first failure this session; silent until it recovers)"
+        ET +%F > "$LIVE_FAIL_MARK"
+    fi
+fi
+rm -f "$LIVE_OUT"
+
+# An intraday poll that recorded nothing changed nothing worth mirroring to
+# `main` (only its heartbeat file, which the live feed above already
+# carries) -- skip the history sync so the public state repo doesn't
+# collect ~390 no-op commits a day. The EOD run always syncs.
 if [ "$MODE" = intraday ] && [ "$EVENT" = 0 ]; then
     exit 0
 fi
