@@ -6,6 +6,22 @@ Buy an S&P 500 stock after it gaps down 2% or more, once price trades back up to
 
 Share of gaps that fill within a quarter, by size and direction. 503 tickers, 230,803 gap events, 2016-09-06 to 2026-09-04 (measured 2026-09-05). It counts fills, not trades, so it doesn't depend on any entry rule.
 
+## Live dashboard
+
+**https://georgemanavazian.github.io/gap-bot/** (GitHub Pages, `docs/index.html`).
+
+Every intraday poll and every EOD run, the VPS tick runs `python -m live.livefeed --push`,
+which joins the stock account's files into one `live.json` and force-pushes it as the single
+commit of the `live` branch of the public state mirror `gap-bot-state`. The page polls that
+file through the GitHub contents API every 75 s during market hours (10 min otherwise) with
+ETag conditionals and rate-limit backoff, so it runs 1.5–2.5 min behind the bot's own
+one-minute Schwab quote pull. Pill: LIVE (fresh poll, market open), CLOSED, or STALE (market
+open but no poll for 3 min: look at the VPS). Nothing on the page is faster than the bot
+itself. Paper money only.
+
+Dead ends, so nobody retries them: a Claude artifact cannot fetch outside hosts (CSP), and
+`raw.githubusercontent.com` serves a 5-minute CDN cache that ignores query strings.
+
 ## Thesis
 
 A gap is a forced repricing on news. I think the crowd over-reacts more on the downside than the upside, because selling is fear-driven and buying is deliberate, and if that holds, a down-gap in a large-cap name that starts to recover intraday is a mean-reversion setup with a target (the prior close) and a time limit (the gap fills or it doesn't). For it to pay, enough gaps have to fill to cover the ones that keep falling, and the failures can't all land on the same day.
