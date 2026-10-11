@@ -266,3 +266,18 @@ def test_module_runs_as_a_script(tmp_path):
                        capture_output=True, text=True, cwd=str(Path(__file__).parent.parent))
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["schema"] == 1
+
+
+# ----------------------------------------- token days-left, intraday series
+
+def test_build_doc_carries_token_days_left_and_intraday_series():
+    hb = {**_heartbeat(), "equity_series": [{"t": "2026-10-13T09:31:02-0400", "equity": 100120.0},
+                                            {"t": "2026-10-13T10:32:02-0400", "equity": 100412.55}]}
+    doc = livefeed.build_live_doc(_state(), hb, _snapshots(), _trades(),
+                                  slot_limit=7, profile="ramp", generated_at=GEN, token_days_left=2.456)
+    assert doc["schwab_token_days_left"] == 2.46
+    assert doc["intraday_series"] == hb["equity_series"]
+    stale = {**hb, "session": "2026-10-10"}
+    doc = livefeed.build_live_doc(_state(), stale, _snapshots(), _trades(),
+                                  slot_limit=7, profile="ramp", generated_at=GEN)
+    assert doc["intraday_series"] == [] and doc["schwab_token_days_left"] is None

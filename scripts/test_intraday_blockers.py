@@ -684,3 +684,84 @@ def test_heartbeat_carries_slot_limit(state_dir):
     ri.run_variant("stock", "2026-09-02", snap, vi.FakeClient(), None, POLL_AT, dry_run=False)
     hb = json.load(open(os.path.join(state_mod.account_paths("stock")["dir"], "intraday.json")))
     assert hb["slot_limit"] == slot_limit(s["open_positions"], s["pending"])
+
+
+def test_heartbeat_equity_series_continues_within_a_session_and_resets_across(state_dir):
+    import live.run_intraday as ri
+    s = vi.fresh()
+    s["pending"] = {"TCH": {"gap_open": 95.0, "prior_close": 100.0, "gap_pct": -5.0,
+                            "gap_date": "2026-09-01", "days_waited": 1}}
+    s["last_run_date"] = "2026-09-01"
+    state_mod.save_state(s, "stock")
+    snap = {"TCH": {"o": 94, "h": 94.5, "l": 93, "c": 94.2}, "SPY": {"o": 500, "h": 501, "l": 499, "c": 500}}
+    hb_path = os.path.join(state_mod.account_paths("stock")["dir"], "intraday.json")
+    ri.run_variant("stock", "2026-09-02", snap, vi.FakeClient(), None, "2026-09-02 10:00", dry_run=False)
+    ri.run_variant("stock", "2026-09-02", snap, vi.FakeClient(), None, "2026-09-02 10:01", dry_run=False)
+    hb = json.load(open(hb_path))
+    assert [pt["t"] for pt in hb["equity_series"]] == ["2026-09-02 10:00", "2026-09-02 10:01"]
+    assert all(pt["equity"] == hb["equity"] for pt in hb["equity_series"])
+    # next session: the series starts over
+    s2 = state_mod.load_state("stock")
+    s2["last_run_date"] = "2026-09-02"
+    state_mod.save_state(s2, "stock")
+    ri.run_variant("stock", "2026-09-03", snap, vi.FakeClient(), None, "2026-09-03 09:31", dry_run=False)
+    hb = json.load(open(hb_path))
+    assert [pt["t"] for pt in hb["equity_series"]] == ["2026-09-03 09:31"]
+
+
+# ------------------------------------------- 10. phone pushes (2026-10-11)
+
+def _notify_stub(tmp_path, argfile, name="py_nt", token_rc=1, fail_rc=0):
+    """Records args; `live.notify token-age` exits token_rc, `tick-failed` exits
+    fail_rc, everything else 0."""
+    body = (f'echo "$@" >> "{argfile}"\n'
+            f'case "$*" in *token-age*) exit {token_rc};; *tick-failed*) exit {fail_rc};; esac\nexit 0\n')
+    return _stub(tmp_path, name, body)
+
+
+def _calls(argfile, sub):
+    return [ln for ln in Path(argfile).read_text().splitlines() if f"-m live.notify {sub}" in ln]
+
+
+def test_tick_pushes_events_and_eod_summary_but_not_quiet_polls(tmp_path):
+    repo, env = tmp_path / "repo", {"PATH": _flock_on_path(tmp_path)}
+    argfile = tmp_path / "args"
+    quiet = _notify_stub(tmp_path, argfile)
+    event = _stub(tmp_path, "py_ev", f'echo "$@" >> "{argfile}"\n'
+                  'case "$*" in *run_intraday*) echo "run_intraday[stock]: recorded entry AAA @ 95.0950";; esac\nexit 0\n')
+    assert _tick(repo, 2, 1000, py=quiet, extra=env)[0] == 0
+    assert _calls(argfile, "events") == []                     # quiet first poll: no push
+    assert _tick(repo, 2, 1001, py=event, extra=env)[0] == 0
+    assert len(_calls(argfile, "events")) == 1                 # the fill: one push
+    assert _tick(repo, 2, 1800, py=quiet, extra=env)[0] == 0
+    assert len(_calls(argfile, "eod")) == 1 and len(_calls(argfile, "events")) == 1
+
+
+def test_tick_failure_push_once_per_session_and_exit_code_unchanged(tmp_path):
+    repo, env = tmp_path / "repo", {"PATH": _flock_on_path(tmp_path)}
+    argfile = tmp_path / "args"
+    boom = _stub(tmp_path, "py_boom", f'echo "$@" >> "{argfile}"\n'
+                 'case "$*" in *run_intraday*) echo "Traceback: boom"; exit 1;; *tick-failed*) exit 0;; esac\nexit 0\n')
+    rc, log = _tick(repo, 2, 1000, py=boom, extra=env)
+    assert rc == 1 and "tick FAILED (intraday), exit 1" in log
+    assert len(_calls(argfile, "tick-failed")) == 1
+    assert "--mode intraday --rc 1" in _calls(argfile, "tick-failed")[0]
+    rc, _ = _tick(repo, 2, 1001, py=boom, extra=env)
+    assert rc == 1 and len(_calls(argfile, "tick-failed")) == 1   # second failure: no second push
+
+
+def test_tick_checks_token_runway_on_the_half_hour_until_a_warning_is_delivered(tmp_path):
+    repo, env = tmp_path / "repo", {"PATH": _flock_on_path(tmp_path)}
+    argfile = tmp_path / "args"
+    quiet = _notify_stub(tmp_path, argfile, name="py_q", token_rc=1)       # nothing to say
+    warn = _notify_stub(tmp_path, argfile, name="py_w", token_rc=0)        # warning delivered
+    assert _tick(repo, 2, 1805, py=quiet, extra=env)[0] == 0
+    assert _calls(argfile, "token-age") == []                                # :05 -> not a check minute
+    assert _tick(repo, 2, 1800, py=quiet, extra=env)[0] == 0
+    assert _tick(repo, 2, 1830, py=quiet, extra=env)[0] == 0
+    assert len(_calls(argfile, "token-age")) == 2                           # nothing to say: keeps checking
+    assert _tick(repo, 2, 1900, py=warn, extra=env)[0] == 0
+    assert _tick(repo, 2, 1930, py=warn, extra=env)[0] == 0
+    assert len(_calls(argfile, "token-age")) == 3                           # delivered once: done for the day
+    assert _tick(repo, 2, 1000, py=warn, extra=env)[0] == 0
+    assert len(_calls(argfile, "token-age")) == 3                           # intraday window never checks

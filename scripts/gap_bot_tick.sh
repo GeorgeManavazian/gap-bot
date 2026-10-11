@@ -32,6 +32,8 @@
 # event, a FAILED poll, a skipped (lock held) poll. EOD logs as before.
 # Every successful poll and EOD run then pushes live.json for the dashboard
 # (live/livefeed.py, 2026-10-11); only its first failure of a session is logged.
+# Phone pushes (live/notify.py, ntfy): recorded fills/exits, the EOD summary,
+# a FAILED tick (once per session), Schwab token runway (<= 3 days, once a day).
 #
 # Reuses the wheel bot's Python venv (PY below) -- same schwab-py, pandas,
 # numpy already installed there; gap-bot has no venv of its own on the VPS.
@@ -114,8 +116,16 @@ OUT="$(mktemp)"
 RC=$?
 if [ "$RC" -ne 0 ]; then
     cat "$OUT" >> "$LOGDIR/tick.log"
-    rm -f "$OUT"
     log "tick FAILED ($MODE), exit $RC"
+    # Phone push (live/notify.py), once per session: a failure every minute
+    # must not be 390 pushes. Marker written only when the push was delivered.
+    NOTIFY_FAIL_MARK="$LOGDIR/.notify_fail_session"
+    if [ "$(cat "$NOTIFY_FAIL_MARK" 2>/dev/null)" != "$(ET +%F)" ]; then
+        if PYTHONPATH="$REPO" "$PY" -m live.notify tick-failed --mode "$MODE" --rc "$RC" "$OUT" >> "$LOGDIR/tick.log" 2>&1; then
+            ET +%F > "$NOTIFY_FAIL_MARK"
+        fi
+    fi
+    rm -f "$OUT"
     exit 1
 fi
 # run_intraday.py prints "recorded exit"/"recorded entry" for a real event.
@@ -130,7 +140,27 @@ if [ "$MODE" = eod ] || [ "$EVENT" = 1 ] || [ "$FIRST" = 1 ]; then
     log "tick ok ($MODE)"
     [ "$FIRST" = 1 ] && ET +%F > "$SESSION_MARK"
 fi
+
+# Phone pushes (2026-10-11, live/notify.py via ntfy): every recorded fill or
+# exit, and the EOD summary line (the no-op "already processed" EOD ticks
+# have no summary, so notify sends nothing). Best-effort: the subcommand's
+# own output is logged only when it delivered; its exit code never matters.
+if [ "$EVENT" = 1 ]; then
+    N="$(PYTHONPATH="$REPO" "$PY" -m live.notify events "$OUT" 2>&1)" && echo "$N" >> "$LOGDIR/tick.log"
+elif [ "$MODE" = eod ]; then
+    N="$(PYTHONPATH="$REPO" "$PY" -m live.notify eod "$OUT" 2>&1)" && echo "$N" >> "$LOGDIR/tick.log"
+fi
 rm -f "$OUT"
+
+# Schwab refresh-token runway (7-day life, owner re-logs in by hand): in the
+# EOD window, twice an hour, push a warning from 3 days left; the marker is
+# written only when the warning was DELIVERED, so an undelivered one retries.
+if [ "$MODE" = eod ] && { [ "$MIN" -eq 0 ] || [ "$MIN" -eq 30 ]; }; then
+    TOKEN_MARK="$LOGDIR/.tokenwarn_session"
+    if [ "$(cat "$TOKEN_MARK" 2>/dev/null)" != "$(ET +%F)" ]; then
+        N="$(PYTHONPATH="$REPO" "$PY" -m live.notify token-age 2>&1)" && { echo "$N" >> "$LOGDIR/tick.log"; ET +%F > "$TOKEN_MARK"; }
+    fi
+fi
 
 # Live feed (2026-10-11): after EVERY successful poll, quiet or not, and
 # after the EOD run, republish live.json to the state repo's `live` branch

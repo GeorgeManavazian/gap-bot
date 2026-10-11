@@ -57,6 +57,10 @@ header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content:
 .pill.live { background: var(--accent-wash); color: var(--accent); }
 .pill.live::before { box-shadow: 0 0 8px currentColor; animation: pulse 2s ease-in-out infinite; }
 .pill.stale { background: var(--warn-wash); color: var(--warn); }
+.tokenwarn { display: inline-block; padding: 3px 8px; border-radius: 6px; font-weight: 700; background: var(--warn-wash); color: var(--warn); }
+.tokenwarn.dead { background: var(--neg-wash); color: var(--neg); }
+.spark { margin-top: 6px; height: 26px; }
+.spark svg { display: block; width: 100%; height: 26px; }
 @keyframes pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .pill.live::before { animation: none; } }
 
@@ -110,12 +114,13 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
       <span>bot saw <span class="mono" id="asof">—</span> <span class="muted" id="asofAgo"></span></span>
       <span>page checked <span class="mono muted" id="checked">—</span></span>
       <span class="muted" id="note"></span>
+      <span id="token" hidden></span>
     </div>
   </header>
 
   <div class="tiles">
     <div class="tile"><div class="label">Equity</div><div class="value mono" id="tEquity">—</div><div class="sub mono" id="tEquitySub">since $100k start</div></div>
-    <div class="tile"><div class="label">Day P&amp;L</div><div class="value mono" id="tDay">—</div><div class="sub mono" id="tDaySub">vs prior close</div></div>
+    <div class="tile"><div class="label">Day P&amp;L</div><div class="value mono" id="tDay">—</div><div class="sub mono" id="tDaySub">vs prior close</div><div class="spark" id="spark" hidden></div></div>
     <div class="tile"><div class="label">Cash</div><div class="value mono" id="tCash">—</div><div class="sub">available</div></div>
     <div class="tile"><div class="label">Open positions</div><div class="value mono" id="tOpen">—</div><div class="sub" id="tOpenSub">of — slots</div></div>
     <div class="tile"><div class="label">Watching</div><div class="value mono" id="tWatch">—</div><div class="sub">gaps waiting for a wick touch</div></div>
@@ -251,6 +256,34 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
     renderChart(m);
     renderTrades(m);
     $('curveNote').textContent = m.intraday ? 'daily closes + live mark' : 'daily closes';
+    renderToken(m);
+    renderSpark(m);
+  }
+
+  function renderToken(m) {
+    var el = $('token'), d = m.schwab_token_days_left;
+    if (d == null || d > 3) { el.hidden = true; el.textContent = ''; return; }
+    el.hidden = false;
+    el.className = 'tokenwarn' + (d <= 0 ? ' dead' : '');
+    el.textContent = d <= 0 ? 'Schwab token EXPIRED ' + (-d).toFixed(1) + 'd ago, bot is blind' : 'Schwab login due in ' + d.toFixed(1) + 'd';
+  }
+
+  function renderSpark(m) {
+    var el = $('spark'), pts = (m.intraday_series || []).filter(function (p) { return p && p.equity != null; });
+    if (pts.length < 2) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    var W = 200, H = 26, base = m.day_start_equity || pts[0].equity;
+    var vals = pts.map(function (p) { return p.equity; }).concat([base]);
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    if (hi - lo < 1) { lo -= 1; hi += 1; }
+    var x = function (i) { return (i / (pts.length - 1) * (W - 2) + 1).toFixed(1); };
+    var y = function (v) { return (2 + (1 - (v - lo) / (hi - lo)) * (H - 4)).toFixed(1); };
+    var d = pts.map(function (p, i) { return (i ? 'L' : 'M') + x(i) + ',' + y(p.equity); }).join(' ');
+    var last = pts[pts.length - 1].equity, col = last >= base ? 'var(--accent)' : 'var(--neg)';
+    el.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Intraday equity">' +
+      '<line x1="0" x2="' + W + '" y1="' + y(base) + '" y2="' + y(base) + '" stroke="var(--border)" stroke-dasharray="2 3"/>' +
+      '<path d="' + d + '" fill="none" stroke="' + col + '" stroke-width="1.5" vector-effect="non-scaling-stroke"/>' +
+      '<circle cx="' + x(pts.length - 1) + '" cy="' + y(last) + '" r="2" fill="' + col + '"/></svg>';
   }
 
   function renderWatch(m) {

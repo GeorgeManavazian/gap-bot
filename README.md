@@ -19,6 +19,13 @@ one-minute Schwab quote pull. Pill: LIVE (fresh poll, market open), CLOSED, or S
 open but no poll for 3 min: look at the VPS). Nothing on the page is faster than the bot
 itself. Paper money only.
 
+Phone pushes (`live/notify.py`, ntfy.sh, topic in `~/.gapbot/ntfy.json` on the VPS, never in
+the repo): every recorded fill or exit, the EOD summary line, a FAILED tick (once per session),
+and the Schwab refresh-token runway from 3 days left (checked on the half hour in the EOD window,
+once a day after delivery). `python -m live.notify test` sends a test push. The page also shows
+the token runway as a banner from 3 days left and an intraday equity sparkline from the
+heartbeat's per-poll `equity_series`.
+
 Dead ends, so nobody retries them: a Claude artifact cannot fetch outside hosts (CSP), and
 `raw.githubusercontent.com` serves a 5-minute CDN cache that ignores query strings.
 

@@ -39,6 +39,7 @@ Run from code/gap-bot/ (paths.py resolves data/live/ relative to cwd).
 """
 from __future__ import annotations
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -56,6 +57,25 @@ from live.intraday import (
 from live.paths import account_paths
 
 REFERENCE = "SPY"
+
+
+def read_heartbeat(variant: str):
+    """The previous poll's heartbeat, or None (first poll ever / unreadable)."""
+    p = account_paths(variant)
+    try:
+        with open(os.path.join(p["dir"], "intraday.json")) as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError, OSError):
+        return None
+
+
+def equity_series(prev: dict | None, today: str, stamp: str, equity: float) -> list:
+    """This session's running equity, one point per poll (2026-10-11, for the
+    dashboard's intraday sparkline): continue the previous heartbeat's series
+    when it is the same session, else start fresh. ~390 points a day at most."""
+    series = list(prev.get("equity_series") or []) if prev and prev.get("session") == today else []
+    series.append({"t": stamp, "equity": round(equity, 2)})
+    return series
 
 
 def write_heartbeat(variant: str, payload: dict) -> None:
@@ -118,6 +138,7 @@ def run_variant(variant: str, today: str, snap: dict, client, chain_provider, st
     write_heartbeat(variant, {
         "polled_at": stamp, "session": today, "profile": PROFILE, "equity": round(result["equity"], 2),
         "slot_limit": slot_limit(state["open_positions"], state["pending"]),
+        "equity_series": equity_series(read_heartbeat(variant), today, stamp, result["equity"]),
         "exits": [t["ticker"] for t in result["trades"]], "entries": result["filled"],
         "watched": watch_table(state, snap),
     })

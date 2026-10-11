@@ -54,7 +54,8 @@ def _days_between(a: str | None, b: str | None) -> int | None:
 
 
 def build_live_doc(state: dict, heartbeat: dict | None, snapshots: list, trades: list, *,
-                   slot_limit: int, profile: str, generated_at: str) -> dict:
+                   slot_limit: int, profile: str, generated_at: str,
+                   token_days_left: float | None = None) -> dict:
     """Pure: the whole page model from the loaded files. `intraday` says
     whether equity/last are intraday marks (heartbeat newer than the last
     snapshot) or EOD values."""
@@ -129,6 +130,8 @@ def build_live_doc(state: dict, heartbeat: dict | None, snapshots: list, trades:
         "profile": profile,
         "slot_limit": slot_limit,
         "intraday": intraday,
+        "intraday_series": list(hb.get("equity_series") or []) if intraday else [],
+        "schwab_token_days_left": None if token_days_left is None else round(token_days_left, 2),
         "equity": equity,
         "cash": state["cash"],
         "day_start_equity": day_start,
@@ -222,10 +225,12 @@ def main(argv=None) -> int:
 
     from live.engine import slot_limit
     from live.intraday import now_et
+    from live.tokenage import days_until_expiry, default_token_path
     state, heartbeat, snapshots, trades = load_inputs(args.variant)
     doc = build_live_doc(state, heartbeat, snapshots, trades,
                          slot_limit=slot_limit(state["open_positions"], state["pending"]),
-                         profile=PROFILE, generated_at=now_et().strftime("%Y-%m-%dT%H:%M:%S%z"))
+                         profile=PROFILE, generated_at=now_et().strftime("%Y-%m-%dT%H:%M:%S%z"),
+                         token_days_left=days_until_expiry(default_token_path()))
     if args.print:
         print(json.dumps(doc, indent=2, default=str))
     if args.push:
