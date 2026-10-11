@@ -565,3 +565,60 @@ def test_adv_lookup_failure_leaves_watch_for_eod(capsys):
     vi.register(s, "AAA", 95.0, 100.0, vi.D0)
     step_one_day(s, vi.D1, {"AAA": vi.bar(94, 95.5, 93, 95.2, prior_close=100, adv=None)}, vi.FILLER)
     assert "AAA" in s["open_positions"]
+
+
+def _sync_stub(cmds, head="abc", pushed=None, diff_rc=0, push_rc=0):
+    """Stub live.sync._run: a mirror whose working tree matches HEAD
+    (diff_rc=0 == nothing new to commit) and whose last successful push
+    is `pushed` (None == never pushed)."""
+    def run(cmd, cwd):
+        cmds.append(cmd)
+        rc, out = 0, ""
+        if cmd[:2] == ["git", "diff"]:
+            rc = diff_rc
+        elif cmd[:2] == ["git", "rev-parse"]:
+            if "refs/pushed/main" in cmd:
+                rc, out = (1, "") if pushed is None else (0, pushed + "\n")
+            else:
+                out = head + "\n"
+        elif cmd[:2] == ["git", "push"]:
+            rc = push_rc
+        return type("R", (), {"returncode": rc, "stdout": out, "stderr": ""})()
+    return run
+
+
+def test_sync_retries_a_push_that_failed_last_time(state_dir, monkeypatch):
+    """2026-10-11: the mirror's PAT expired, the EOD push failed, and every
+    later sync said True without pushing because rsync saw no diff against
+    the already-committed mirror. No-diff must still push when HEAD is not
+    what was last pushed successfully."""
+    import live.sync as sync
+    monkeypatch.setattr(sync, "_load_cfg", lambda: {"repo": "x/y", "token": "t", "user": "u"})
+    cmds = []
+    monkeypatch.setattr(sync, "_run", _sync_stub(cmds, head="abc", pushed="old"))
+    assert sync.sync_state(state_dir, os.path.join(state_dir, "mirror")) is True
+    assert any(c[:2] == ["git", "push"] for c in cmds), cmds
+    assert ["git", "update-ref", "refs/pushed/main", "HEAD"] in cmds, cmds
+    # never pushed at all (fresh mirror) -> push too
+    cmds.clear()
+    monkeypatch.setattr(sync, "_run", _sync_stub(cmds, head="abc", pushed=None))
+    assert sync.sync_state(state_dir, os.path.join(state_dir, "mirror")) is True
+    assert any(c[:2] == ["git", "push"] for c in cmds), cmds
+
+
+def test_sync_skips_the_push_when_head_was_already_pushed(state_dir, monkeypatch):
+    import live.sync as sync
+    monkeypatch.setattr(sync, "_load_cfg", lambda: {"repo": "x/y", "token": "t", "user": "u"})
+    cmds = []
+    monkeypatch.setattr(sync, "_run", _sync_stub(cmds, head="abc", pushed="abc"))
+    assert sync.sync_state(state_dir, os.path.join(state_dir, "mirror")) is True
+    assert not any(c[:2] == ["git", "push"] for c in cmds), cmds
+
+
+def test_sync_failed_push_does_not_mark_head_as_pushed(state_dir, monkeypatch):
+    import live.sync as sync
+    monkeypatch.setattr(sync, "_load_cfg", lambda: {"repo": "x/y", "token": "t", "user": "u"})
+    cmds = []
+    monkeypatch.setattr(sync, "_run", _sync_stub(cmds, head="abc", pushed=None, diff_rc=1, push_rc=1))
+    assert sync.sync_state(state_dir, os.path.join(state_dir, "mirror")) is False
+    assert ["git", "update-ref", "refs/pushed/main", "HEAD"] not in cmds, cmds

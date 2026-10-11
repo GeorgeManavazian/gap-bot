@@ -102,13 +102,20 @@ def sync_state(state_dir: str, mirror_clone_dir: str) -> bool:
 
     _run(["git", "add", "-A"], mirror_clone_dir)
     diff = _run(["git", "diff", "--cached", "--quiet"], mirror_clone_dir)
-    if diff.returncode == 0:
-        return True  # nothing changed, nothing to push -- not a failure
+    if diff.returncode != 0:
+        r = _run(["git", "commit", "-q", "-m", "state sync"], mirror_clone_dir)
+        if r.returncode != 0:
+            print(f"sync_state: commit failed: {r.stderr}")
+            return False
 
-    r = _run(["git", "commit", "-q", "-m", "state sync"], mirror_clone_dir)
-    if r.returncode != 0:
-        print(f"sync_state: commit failed: {r.stderr}")
-        return False
+    # Push whenever HEAD is not what last reached GitHub, not only when
+    # this call committed something. Found 2026-10-11: the PAT expired, the
+    # EOD push failed, and every later tick saw "no diff" against the
+    # already-committed mirror and returned True without retrying -- the
+    # public mirror sat a month stale while the log said "sync ok". The
+    # marker ref is written only after a successful push.
+    if not _needs_push(mirror_clone_dir):
+        return True  # nothing new since the last successful push
 
     remote = f"https://x-access-token:{cfg['token']}@github.com/{cfg['repo']}.git"
     r = _run(["git", "push", "-q", "-f", remote, "HEAD:main"], mirror_clone_dir)
@@ -117,4 +124,21 @@ def sync_state(state_dir: str, mirror_clone_dir: str) -> bool:
         safe_err = r.stderr.replace(cfg["token"], "***")
         print(f"sync_state: push failed: {safe_err}")
         return False
+    _run(["git", "update-ref", PUSHED_REF, "HEAD"], mirror_clone_dir)
     return True
+
+
+PUSHED_REF = "refs/pushed/main"
+
+
+def _needs_push(mirror_clone_dir: str) -> bool:
+    """True unless HEAD equals the commit recorded by the last successful
+    push. A missing marker (fresh mirror, or first run after this fix)
+    means push."""
+    head = _run(["git", "rev-parse", "HEAD"], mirror_clone_dir)
+    if head.returncode != 0:
+        return True
+    pushed = _run(["git", "rev-parse", "-q", "--verify", PUSHED_REF], mirror_clone_dir)
+    if pushed.returncode != 0:
+        return True
+    return head.stdout.strip() != pushed.stdout.strip()
