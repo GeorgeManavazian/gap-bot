@@ -25,3 +25,4 @@ charts/
 
 # Licensed option-chain dumps (ThetaData) stay local
 *.pkl
+.playwright-mcp/

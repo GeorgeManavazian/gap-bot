@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-13T10:32:07-0400 (EXAMPLE DATA)",
+  "polled_at": "2026-10-13T10:32:02-0400",
+  "session": "2026-10-13",
+  "last_run_date": "2026-10-10",
+  "profile": "ramp",
+  "slot_limit": 7,
+  "intraday": true,
+  "equity": 100412.55,
+  "cash": 71234.1,
+  "day_start_equity": 100120.0,
+  "open_positions": [
+    {
+      "ticker": "LULU",
+      "bucket": "10%+",
+      "gap_pct": -19.4,
+      "entry": 98.25,
+      "last": 102.2,
+      "stop": 49.12,
+      "tp": 121.8,
+      "h": 103.0,
+      "l": 99.5,
+      "days_held": 2,
+      "entry_date": "2026-10-09",
+      "units": 50.0
+    },
+    {
+      "ticker": "NEW",
+      "bucket": "3-5%",
+      "gap_pct": -3.9,
+      "entry": 50.0,
+      "last": 50.5,
+      "stop": 25.0,
+      "tp": 52.0,
+      "h": 51.0,
+      "l": 49.0,
+      "days_held": 0,
+      "entry_date": "2026-10-13",
+      "units": 10.0
+    }
+  ],
+  "pending": [
+    {
+      "ticker": "CCL",
+      "bucket": "2-3%",
+      "gap_pct": -2.07,
+      "gap_open": 25.61,
+      "prior_close": 26.15,
+      "last": 25.7,
+      "h": 25.9,
+      "l": 25.3,
+      "days_waited": 2,
+      "gap_date": "2026-10-08",
+      "consumed_on": "2026-10-13"
+    },
+    {
+      "ticker": "T",
+      "bucket": "10%+",
+      "gap_pct": -10.01,
+      "gap_open": 22.38,
+      "prior_close": 24.87,
+      "last": 22.1,
+      "h": 22.3,
+      "l": 21.9,
+      "days_waited": 1,
+      "gap_date": "2026-10-09",
+      "consumed_on": null
+    }
+  ],
+  "today": {
+    "entries": [
+      {
+        "ticker": "NEW",
+        "entry": 50.0,
+        "time": "2026-10-13T09:47:00-0400"
+      }
+    ],
+    "exits": [
+      {
+        "ticker": "OLD",
+        "exit_reason": "time_63d",
+        "exit_price": 38.0,
+        "pnl_pct": -5.0,
+        "time": "2026-10-13T10:15:00-0400"
+      }
+    ]
+  },
+  "equity_curve": [
+    {
+      "date": "2026-10-08",
+      "equity": 100000.0
+    },
+    {
+      "date": "2026-10-09",
+      "equity": 100050.0
+    },
+    {
+      "date": "2026-10-10",
+      "equity": 100120.0
+    }
+  ],
+  "closed_trades": [
+    {
+      "ticker": "OLD",
+      "entry_date": "2026-10-08",
+      "exit_date": "2026-10-13",
+      "exit_reason": "time_63d",
+      "entry_price": 40.0,
+      "exit_price": 38.0,
+      "pnl_pct": -5.0,
+      "pnl_dollar": -200.0,
+      "days_held": 3
+    },
+    {
+      "ticker": "AAA",
+      "entry_date": "2026-10-02",
+      "exit_date": "2026-10-06",
+      "exit_reason": "tp_gap_filled",
+      "entry_price": 10.0,
+      "exit_price": 11.0,
+      "pnl_pct": 10.0,
+      "pnl_dollar": 100.0,
+      "days_held": 2
+    }
+  ]
+}

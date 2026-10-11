@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gap-Fill Bot</title>
+<meta name="description" content="Live paper-trading view of the S&P 500 gap-fill bot: what it watches, what it holds, what it did today.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;500;700;800&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: a terminal-style tape. Dark-first (the bot's existing identity), light theme mirrored. */
+:root {
+  --bg: #0e1012; --surface: #161b1e; --surface-2: #1d2529; --border: rgba(255,255,255,0.08);
+  --fg: #e6e9e9; --fg-2: #9aa0a2; --fg-3: #646b6e;
+  --accent: #9be32d; --accent-wash: rgba(155,227,45,0.12);
+  --neg: #ef5a55; --neg-wash: rgba(239,90,85,0.12);
+  --warn: #f2b53a; --warn-wash: rgba(242,181,58,0.14);
+  --display: "Roboto Condensed", "Arial Narrow", system-ui, sans-serif;
+  --mono: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f3f4f1; --surface: #ffffff; --surface-2: #e9ece6; --border: rgba(0,0,0,0.1);
+    --fg: #15181a; --fg-2: #4d5457; --fg-3: #7d8487;
+    --accent: #4c8a06; --accent-wash: rgba(76,138,6,0.12);
+    --neg: #c62f2a; --neg-wash: rgba(198,47,42,0.1);
+    --warn: #a86d05; --warn-wash: rgba(168,109,5,0.14);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f3f4f1; --surface: #ffffff; --surface-2: #e9ece6; --border: rgba(0,0,0,0.1);
+  --fg: #15181a; --fg-2: #4d5457; --fg-3: #7d8487;
+  --accent: #4c8a06; --accent-wash: rgba(76,138,6,0.12);
+  --neg: #c62f2a; --neg-wash: rgba(198,47,42,0.1);
+  --warn: #a86d05; --warn-wash: rgba(168,109,5,0.14);
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 14px/1.4 var(--display); padding-block: 20px 48px; padding-inline: 16px; }
+.page { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.pos { color: var(--accent); } .neg { color: var(--neg); } .muted { color: var(--fg-3); }
+
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 24px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.brand { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px; }
+.wordmark { font-size: 28px; font-weight: 800; letter-spacing: .01em; text-transform: uppercase; }
+.wordmark b { color: var(--accent); }
+.sub { font-size: 12px; color: var(--fg-2); text-transform: uppercase; letter-spacing: .08em; }
+.status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; font-size: 12.5px; color: var(--fg-2); }
+.pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 12px; background: var(--surface-2); color: var(--fg-2); }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.pill.live { background: var(--accent-wash); color: var(--accent); }
+.pill.live::before { box-shadow: 0 0 8px currentColor; animation: pulse 2s ease-in-out infinite; }
+.pill.stale { background: var(--warn-wash); color: var(--warn); }
+@keyframes pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .pill.live::before { animation: none; } }
+
+.tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+@media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, 1fr); } .tile:last-child { grid-column: span 2; } }
+.tile { background: var(--surface); padding: 14px 16px; min-width: 0; }
+.tile .label { font-size: 11px; color: var(--fg-3); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
+.tile .value { font-size: 22px; font-weight: 600; }
+.tile .sub { font-size: 12px; color: var(--fg-2); text-transform: none; letter-spacing: 0; margin-top: 3px; }
+
+.row { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; min-width: 0; }
+.card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 12px; margin-bottom: 12px; }
+.card-title { font-size: 13px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.card-title .count { color: var(--fg-3); font-weight: 500; letter-spacing: 0; text-transform: none; margin-left: 6px; }
+.card-note { font-size: 11.5px; color: var(--fg-3); }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: right; padding: 5px 8px; font: 600 10.5px var(--mono); color: var(--fg-3); text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+tr:last-child td { border-bottom: none; }
+.tk { font-weight: 700; }
+.badge { display: inline-block; font: 600 10px var(--mono); padding: 2px 6px; border-radius: 4px; background: var(--accent-wash); color: var(--accent); margin-left: 6px; vertical-align: middle; }
+.bar { width: 64px; height: 5px; border-radius: 3px; background: var(--surface-2); display: inline-block; vertical-align: middle; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.empty { padding: 28px 10px; text-align: center; color: var(--fg-2); }
+.empty small { display: block; color: var(--fg-3); margin-top: 4px; }
+.feed { display: flex; flex-direction: column; gap: 8px; }
+.ev { display: grid; grid-template-columns: 88px 1fr auto; gap: 10px; align-items: baseline; font-size: 13px; }
+.ev .when { white-space: nowrap; }
+.ev .when { font: 500 12px var(--mono); color: var(--fg-3); }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart .axis { font: 10.5px var(--mono); fill: var(--fg-3); }
+.chart .grid { stroke: var(--border); }
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; font-size: 11.5px; color: var(--fg-3); padding-top: 6px; }
+footer a { color: var(--fg-2); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="brand">
+      <div class="wordmark">Gap-Fill Bot<b>.</b></div>
+      <div class="sub">live paper trading · <span id="profile">—</span></div>
+    </div>
+    <div class="status">
+      <span class="pill" id="pill">Connecting</span>
+      <span>bot saw <span class="mono" id="asof">—</span> <span class="muted" id="asofAgo"></span></span>
+      <span>page checked <span class="mono muted" id="checked">—</span></span>
+      <span class="muted" id="note"></span>
+    </div>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><div class="label">Equity</div><div class="value mono" id="tEquity">—</div><div class="sub mono" id="tEquitySub">since $100k start</div></div>
+    <div class="tile"><div class="label">Day P&amp;L</div><div class="value mono" id="tDay">—</div><div class="sub mono" id="tDaySub">vs prior close</div></div>
+    <div class="tile"><div class="label">Cash</div><div class="value mono" id="tCash">—</div><div class="sub">available</div></div>
+    <div class="tile"><div class="label">Open positions</div><div class="value mono" id="tOpen">—</div><div class="sub" id="tOpenSub">of — slots</div></div>
+    <div class="tile"><div class="label">Watching</div><div class="value mono" id="tWatch">—</div><div class="sub">gaps waiting for a wick touch</div></div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <div class="card-head"><div class="card-title">Gap watch<span class="count" id="cWatch"></span></div><div class="card-note">closest to the wick first · last = the bot's own quote</div></div>
+      <div class="scroll" id="watch"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><div class="card-title">Open positions<span class="count" id="cPos"></span></div><div class="card-note">marked at the bot's last quote</div></div>
+      <div class="scroll" id="positions"></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <div class="card-head"><div class="card-title">Equity curve</div><div class="card-note" id="curveNote">daily closes</div></div>
+      <div class="chart" id="chart"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><div class="card-title">Today<span class="count" id="cToday"></span></div><div class="card-note">fills and exits booked this session</div></div>
+      <div id="today"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div class="card-title">Closed trades<span class="count" id="cTrades"></span></div><div class="card-note">newest first, last 20</div></div>
+    <div class="scroll" id="trades"></div>
+  </div>
+
+  <footer>
+    <div id="rule">Resting-limit entry at the gap-day open · gap-size priority · 1–2% bucket excluded · 3%-ADV floor · $0 commission + 10 bps</div>
+    <div class="mono">quotes: Schwab, one pull a minute by the bot · <a href="https://github.com/GeorgeManavazian/gap-bot-state/tree/live">state repo</a></div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var API = 'https://api.github.com/repos/GeorgeManavazian/gap-bot-state/contents/live.json?ref=live';
+  var SRC = new URLSearchParams(location.search).get('src') || API;
+  var POLL_OPEN = 75000, POLL_CLOSED = 600000, STALE_AFTER = 180000, RATE_FLOOR = 8;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var model = null, etag = null, lastFetch = 0, fetchError = null, backoffUntil = 0, timer = null;
+
+  // ---- time helpers (everything in America/New_York) ----
+  var etFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  var etClock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  function etParts(d) {
+    var o = {};
+    etFmt.formatToParts(d).forEach(function (p) { o[p.type] = p.value; });
+    return { dow: o.weekday, hm: (+o.hour % 24) * 100 + (+o.minute) };
+  }
+  function marketHours(d) {
+    var p = etParts(d || new Date());
+    return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].indexOf(p.dow) >= 0 && p.hm >= 925 && p.hm <= 1610;
+  }
+  // "2026-10-13T10:32:02-0400" -> Date (Safari needs the colon in the offset)
+  function parseStamp(s) {
+    if (!s) return null;
+    var d = s instanceof Date ? s : new Date(String(s).replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  function timeET(s) {
+    var d = parseStamp(s);
+    return d ? etClock.format(d) : '—';
+  }
+  function ago(ms) {
+    if (ms == null) return '';
+    var s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm ago';
+    return Math.floor(s / 86400) + 'd ' + Math.floor((s % 86400) / 3600) + 'h ago';
+  }
+
+  // ---- formatting ----
+  function money(v) { return v == null ? '—' : (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 }); }
+  function money2(v) { return v == null ? '—' : (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function pct(v, d) { return v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d == null ? 2 : d) + '%'; }
+  function px(v) { return v == null ? '—' : '$' + v.toFixed(2); }
+  function sign(v) { return v > 0 ? 'pos' : v < 0 ? 'neg' : ''; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  // ---- status line (runs every second) ----
+  function setStatus() {
+    var now = Date.now();
+    var polled = model ? parseStamp(model.polled_at) : null;
+    var age = polled ? now - polled.getTime() : null;
+    var open = marketHours();
+    var pill = $('pill'), cls = '', text = '';
+    if (!model && fetchError) { cls = 'stale'; text = 'No data'; }
+    else if (!model) { cls = ''; text = 'Connecting'; }
+    else if (open && age != null && age < STALE_AFTER && !fetchError) { cls = 'live'; text = 'Live'; }
+    else if (open) { cls = 'stale'; text = 'Stale'; }
+    else { cls = ''; text = 'Closed'; }
+    pill.className = 'pill ' + cls;
+    pill.textContent = text;
+    $('asof').textContent = model && model.polled_at ? timeET(model.polled_at) + ' ET' : (model ? 'EOD ' + (model.session || '—') : '—');
+    $('asofAgo').textContent = age != null ? '· ' + ago(age) : '';
+    $('checked').textContent = lastFetch ? ago(now - lastFetch) : '—';
+    var note = '';
+    if (fetchError) note = 'feed error: ' + fetchError;
+    else if (now < backoffUntil) note = 'rate limit, resuming ' + timeET(new Date(backoffUntil)) + ' ET';
+    else if (!open) note = 'market closed · polling every 10 min';
+    $('note').textContent = note;
+  }
+
+  // ---- rendering ----
+  function render(m) {
+    $('profile').textContent = m.profile || '—';
+    var nOpen = (m.open_positions || []).length, nPend = (m.pending || []).length;
+    $('tEquity').textContent = money(m.equity);
+    var tot = m.equity - 100000;
+    $('tEquity').className = 'value mono ' + sign(tot);
+    $('tEquitySub').textContent = (tot >= 0 ? '+' : '') + money(tot) + ' (' + pct(tot / 1000) + ') since $100k start';
+    $('tEquitySub').className = 'sub mono ' + sign(tot);
+    var day = m.equity - m.day_start_equity;
+    $('tDay').textContent = (day >= 0 ? '+' : '') + money(day);
+    $('tDay').className = 'value mono ' + sign(day);
+    $('tDaySub').textContent = pct(m.day_start_equity ? day / m.day_start_equity * 100 : 0) + (m.intraday ? ' intraday mark' : ' at the close');
+    $('tCash').textContent = money(m.cash);
+    $('tOpen').textContent = nOpen;
+    $('tOpenSub').textContent = 'of ' + (m.slot_limit != null ? m.slot_limit : '—') + ' slots (' + (m.profile || '') + ')';
+    $('tWatch').textContent = nPend;
+    renderWatch(m);
+    renderPositions(m);
+    renderToday(m);
+    renderChart(m);
+    renderTrades(m);
+    $('curveNote').textContent = m.intraday ? 'daily closes + live mark' : 'daily closes';
+  }
+
+  function renderWatch(m) {
+    var rows = (m.pending || []).map(function (w) {
+      var dist = (w.last != null && w.last > 0) ? (w.gap_open - w.last) / w.last * 100 : null;
+      return Object.assign({ dist: dist }, w);
+    }).sort(function (a, b) {
+      if (a.dist == null && b.dist == null) return Math.abs(b.gap_pct) - Math.abs(a.gap_pct);
+      if (a.dist == null) return 1;
+      if (b.dist == null) return -1;
+      return a.dist - b.dist;
+    });
+    $('cWatch').textContent = rows.length ? '(' + rows.length + ')' : '';
+    if (!rows.length) { $('watch').innerHTML = '<div class="empty">Nothing waiting<small>no open gap-down watches right now</small></div>'; return; }
+    var h = '<table><thead><tr><th>Ticker</th><th>Gap</th><th>Wick</th><th>Last</th><th>To wick</th><th>Session L–H</th><th>Wait</th></tr></thead><tbody>';
+    rows.forEach(function (w) {
+      var touched = w.consumed_on && w.consumed_on === m.session;
+      var progress = w.dist == null ? 0 : Math.max(0, Math.min(100, 100 - w.dist / Math.abs(w.gap_pct) * 100));
+      h += '<tr><td><span class="tk">' + esc(w.ticker) + '</span>' + (touched ? '<span class="badge">touched today</span>' : '') +
+        '</td><td class="mono neg">' + pct(w.gap_pct) + ' <span class="muted">' + esc(w.bucket || '') + '</span></td>' +
+        '<td class="mono">' + px(w.gap_open) + '</td><td class="mono">' + px(w.last) + '</td>' +
+        '<td class="mono ' + (w.dist != null && w.dist <= 0 ? 'pos' : '') + '">' + pct(w.dist) + ' <span class="bar"><i style="width:' + progress.toFixed(0) + '%"></i></span></td>' +
+        '<td class="mono muted">' + (w.l != null ? px(w.l) + '–' + px(w.h) : '—') + '</td>' +
+        '<td class="mono muted">' + w.days_waited + 'd</td></tr>';
+    });
+    $('watch').innerHTML = h + '</tbody></table>';
+  }
+
+  function renderPositions(m) {
+    var rows = m.open_positions || [];
+    $('cPos').textContent = rows.length ? '(' + rows.length + ')' : '';
+    if (!rows.length) { $('positions').innerHTML = '<div class="empty">No open positions<small>nothing has hit a wick entry yet</small></div>'; return; }
+    var h = '<table><thead><tr><th>Ticker</th><th>Entry</th><th>Last</th><th>P&amp;L</th><th>To stop</th><th>To TP</th><th>Held</th></tr></thead><tbody>';
+    rows.forEach(function (p) {
+      var pnl = (p.last - p.entry) / p.entry * 100;
+      var toStop = p.last ? (p.last - p.stop) / p.last * 100 : null;
+      var toTp = p.last ? (p.tp - p.last) / p.last * 100 : null;
+      h += '<tr><td><span class="tk">' + esc(p.ticker) + '</span> <span class="muted">' + esc(p.bucket || '') + '</span></td>' +
+        '<td class="mono">' + px(p.entry) + '</td><td class="mono">' + px(p.last) + '</td>' +
+        '<td class="mono ' + sign(pnl) + '">' + pct(pnl) + '</td>' +
+        '<td class="mono muted">' + pct(toStop, 1) + '</td><td class="mono muted">' + pct(toTp, 1) + '</td>' +
+        '<td class="mono muted">' + p.days_held + 'd</td></tr>';
+    });
+    $('positions').innerHTML = h + '</tbody></table>';
+  }
+
+  function renderToday(m) {
+    var t = m.today || { entries: [], exits: [] };
+    var evs = [];
+    (t.entries || []).forEach(function (e) { evs.push({ time: e.time, html: '<span class="tk">' + esc(e.ticker) + '</span> bought at ' + px(e.entry), right: '<span class="muted">entry</span>' }); });
+    (t.exits || []).forEach(function (x) { evs.push({ time: x.time, html: '<span class="tk">' + esc(x.ticker) + '</span> sold at ' + px(x.exit_price) + ' <span class="muted">' + esc(x.exit_reason) + '</span>', right: '<span class="mono ' + sign(x.pnl_pct) + '">' + pct(x.pnl_pct) + '</span>' }); });
+    evs.sort(function (a, b) { return (b.time || '').localeCompare(a.time || ''); });
+    $('cToday').textContent = evs.length ? '(' + evs.length + ')' : '';
+    if (!evs.length) { $('today').innerHTML = '<div class="empty">Nothing booked yet today<small>' + (m.intraday ? 'the poller is watching' : 'session ' + esc(m.session || '—') + ' closed with no fills or exits') + '</small></div>'; return; }
+    $('today').innerHTML = '<div class="feed">' + evs.map(function (e) {
+      return '<div class="ev"><span class="when">' + (e.time ? timeET(e.time) : '—') + '</span><span>' + e.html + '</span><span>' + e.right + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  function renderChart(m) {
+    var pts = (m.equity_curve || []).slice();
+    if (m.intraday && m.equity != null) pts.push({ date: m.session, equity: m.equity, live: true });
+    var box = $('chart');
+    if (pts.length < 2) { box.innerHTML = '<div class="empty">Not enough history yet<small>the curve fills in after a few sessions</small></div>'; return; }
+    var W = 700, H = 220, L = 56, R = 14, T = 14, B = 26, pw = W - L - R, ph = H - T - B;
+    var vals = pts.map(function (p) { return p.equity; }).concat([100000]);
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    var pad = Math.max((hi - lo) * 0.08, 250); lo -= pad; hi += pad;
+    var x = function (i) { return L + i / (pts.length - 1) * pw; };
+    var y = function (v) { return T + (1 - (v - lo) / (hi - lo)) * ph; };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Equity curve">';
+    [lo, (lo + hi) / 2, hi].forEach(function (v) {
+      s += '<line class="grid" x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v).toFixed(1) + '" y2="' + y(v).toFixed(1) + '"/>';
+      s += '<text class="axis" x="' + (L - 8) + '" y="' + (y(v) + 4).toFixed(1) + '" text-anchor="end">$' + (v / 1000).toFixed(1) + 'k</text>';
+    });
+    s += '<line class="grid" stroke-dasharray="3 4" x1="' + L + '" x2="' + (W - R) + '" y1="' + y(100000).toFixed(1) + '" y2="' + y(100000).toFixed(1) + '"/>';
+    var d = pts.map(function (p, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(p.equity).toFixed(1); }).join(' ');
+    var area = d + ' L' + x(pts.length - 1).toFixed(1) + ',' + (T + ph) + ' L' + L + ',' + (T + ph) + ' Z';
+    s += '<path d="' + area + '" fill="var(--accent)" opacity="0.08"/>';
+    s += '<path d="' + d + '" fill="none" stroke="var(--accent)" stroke-width="2"/>';
+    var last = pts[pts.length - 1];
+    s += '<circle cx="' + x(pts.length - 1).toFixed(1) + '" cy="' + y(last.equity).toFixed(1) + '" r="4" fill="' + (last.live ? 'var(--warn)' : 'var(--accent)') + '"/>';
+    s += '<text class="axis" x="' + L + '" y="' + (H - 8) + '">' + esc(pts[0].date) + '</text>';
+    s += '<text class="axis" x="' + (W - R) + '" y="' + (H - 8) + '" text-anchor="end">' + esc(last.date) + (last.live ? ' (live)' : '') + '</text>';
+    box.innerHTML = s + '</svg>';
+  }
+
+  function renderTrades(m) {
+    var rows = m.closed_trades || [];
+    $('cTrades').textContent = rows.length ? '(' + rows.length + ')' : '';
+    if (!rows.length) { $('trades').innerHTML = '<div class="empty">No trades closed yet</div>'; return; }
+    var h = '<table><thead><tr><th>Ticker</th><th>Entered</th><th>Exited</th><th>Exit</th><th>In</th><th>Out</th><th>P&amp;L</th><th>$</th><th>Held</th></tr></thead><tbody>';
+    rows.forEach(function (t) {
+      h += '<tr><td class="tk">' + esc(t.ticker) + '</td><td class="mono muted">' + esc(t.entry_date) + '</td><td class="mono muted">' + esc(t.exit_date) + '</td>' +
+        '<td class="mono">' + esc(t.exit_reason) + '</td><td class="mono">' + px(t.entry_price) + '</td><td class="mono">' + px(t.exit_price) + '</td>' +
+        '<td class="mono ' + sign(t.pnl_pct) + '">' + pct(t.pnl_pct) + '</td><td class="mono ' + sign(t.pnl_dollar) + '">' + money2(t.pnl_dollar) + '</td>' +
+        '<td class="mono muted">' + (t.days_held == null ? '—' : t.days_held + 'd') + '</td></tr>';
+    });
+    $('trades').innerHTML = h + '</tbody></table>';
+  }
+
+  // ---- polling ----
+  function schedule(ms) {
+    clearTimeout(timer);
+    timer = setTimeout(poll, ms != null ? ms : (marketHours() ? POLL_OPEN : POLL_CLOSED));
+  }
+  function poll() {
+    var now = Date.now();
+    if (now < backoffUntil) { setStatus(); schedule(backoffUntil - now + 1000); return; }
+    var headers = { 'Accept': 'application/vnd.github.raw+json' };
+    if (etag) headers['If-None-Match'] = etag;
+    fetch(SRC, { headers: headers, cache: 'no-store' }).then(function (r) {
+      lastFetch = Date.now();
+      var rem = r.headers.get('X-RateLimit-Remaining'), reset = r.headers.get('X-RateLimit-Reset');
+      if (rem !== null && +rem < RATE_FLOOR && reset) backoffUntil = +reset * 1000 + 2000;
+      if (r.status === 304) { fetchError = null; return null; }
+      if (r.status === 403 || r.status === 429) {
+        backoffUntil = reset ? +reset * 1000 + 2000 : Date.now() + POLL_CLOSED;
+        throw new Error('rate limited (HTTP ' + r.status + ')');
+      }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      etag = r.headers.get('ETag');
+      return r.json();
+    }).then(function (doc) {
+      if (doc) { model = doc; fetchError = null; render(model); }
+    }).catch(function (e) {
+      fetchError = e && e.message ? e.message : String(e);
+    }).then(function () { setStatus(); schedule(); });
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && Date.now() - lastFetch > 60000) poll();
+  });
+  setInterval(setStatus, 1000);
+  setStatus();
+  poll();
+})();
+</script>
+</body>
+</html>
